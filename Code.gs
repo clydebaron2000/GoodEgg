@@ -824,13 +824,12 @@ function buildDashboard() {
   sheet.getRange(row, 1, 1, 3).setValues([['Size','Trays sold','Revenue']])
     .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
   row += 1;
-  // QUERY to aggregate by size for status=done. Then re-label using sizes.
+  // QUERY aggregates by size for status=done. Column A holds the raw size
+  // key; admins can correlate with the "Current stock by size" section
+  // above (which has the label). Keeping it as a single QUERY avoids
+  // the quote-escaping pain of joining sizes.label in here.
   sheet.getRange(row, 1).setFormula(
-    '=IFERROR(' +
-      'ARRAYFORMULA({' +
-        'IFERROR(VLOOKUP(QUERY(orders!E2:K,"SELECT E, SUM(F), SUM(F*K) WHERE H = ' + "'done'" + ' GROUP BY E LABEL E " + "''" + ", SUM(F) " + "''" + ", SUM(F*K) " + "''" + '",0),sizes!A:B,2,FALSE),"")' +
-      '},' +
-      'QUERY(orders!E2:K,"SELECT SUM(F), SUM(F*K) WHERE H = ' + "'done'" + ' GROUP BY E LABEL SUM(F) " + "''" + ", SUM(F*K) " + "''" + '",0)),"")'
+    "=IFERROR(QUERY(orders!E2:K,\"SELECT E, SUM(F), SUM(F*K) WHERE H = 'done' GROUP BY E LABEL E '', SUM(F) '', SUM(F*K) ''\",0),\"\")"
   );
   sheet.getRange(row, 3, 10, 1).setNumberFormat('"₱"#,##0');
   var revBySizeEnd = row + 9;
