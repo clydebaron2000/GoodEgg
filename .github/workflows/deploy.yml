@@ -31,7 +31,9 @@ jobs:
             echo "::error::SCRIPT_URL secret is empty or missing. Add it under Settings → Secrets and variables → Actions."
             exit 1
           fi
-          sed -i "s|YOUR_APPS_SCRIPT_URL_HERE|$SCRIPT_URL|g" eggtrack.html
+          # Only replace the first occurrence (the const assignment), so the
+          # placeholder check later in the file stays intact.
+          sed -i "0,/YOUR_APPS_SCRIPT_URL_HERE/ s|YOUR_APPS_SCRIPT_URL_HERE|$SCRIPT_URL|" eggtrack.html
 
       - name: Upload to GitHub Pages
         uses: actions/upload-pages-artifact@v3
