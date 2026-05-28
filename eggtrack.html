@@ -1159,10 +1159,22 @@ async function savePrices() {
     if (el) { const v = parseFloat(el.value); if (!isNaN(v) && v >= 0) prices[k] = v; }
   });
 
+  // Build the per-size change list before mutating state, so we can show
+  // the same human-readable summary the server will write.
+  const changes = [];
+  SIZE_ORDER.forEach(k => {
+    if (prices[k] == null) return;
+    const oldP = Number(state.prices[k]) || 0;
+    const newP = Number(prices[k]) || 0;
+    if (oldP !== newP) changes.push(`${SIZE_LABELS[k]} ₱${oldP} → ₱${newP}`);
+  });
+
   // Optimistic
   const snap = snapshot();
   Object.assign(state.prices, prices);
-  pushActivity('Prices updated');
+  if (changes.length) {
+    pushActivity((changes.length === 1 ? 'Price updated: ' : 'Prices updated: ') + changes.join(', '));
+  }
   renderAll();
 
   const btn = document.getElementById('btn-save-prices');

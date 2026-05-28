@@ -215,7 +215,7 @@ function savePrices(data) {
   var ss      = SpreadsheetApp.getActiveSpreadsheet();
   var sheet   = ss.getSheetByName(SHEET_PRICES);
   var rows    = sheet.getDataRange().getValues();
-  var changes = 0;
+  var changes = [];
   for (var i = 1; i < rows.length; i++) {
     var size = rows[i][0];
     if (data.prices[size] !== undefined) {
@@ -224,11 +224,14 @@ function savePrices(data) {
       if (oldPrice !== newPrice) {
         sheet.getRange(i + 1, 2).setValue(newPrice);
         logPriceEvent(ss, { size: size, oldPrice: oldPrice, newPrice: newPrice });
-        changes++;
+        changes.push(sizeLabel(size) + ' ₱' + oldPrice + ' → ₱' + newPrice);
       }
     }
   }
-  if (changes > 0) logActivity(ss, 'Prices updated (' + changes + ' size' + plural(changes) + ')');
+  if (changes.length > 0) {
+    var prefix = changes.length === 1 ? 'Price updated: ' : 'Prices updated: ';
+    logActivity(ss, prefix + changes.join(', '));
+  }
   return { success: true, state: getState() };
 }
 
