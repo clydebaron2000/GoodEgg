@@ -754,17 +754,18 @@ function buildDashboard() {
   sheet.getRange(row, 1, 1, 5).setValues([['Size','Trays','Eggs','₱/tray','Value']])
     .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
   row += 1;
-  // One row per size in the sizes sheet, ordered by sortOrder.
-  // Use ARRAYFORMULA so the table grows automatically if sizes are added.
+  // One row per size in the sizes sheet, ordered by sortOrder, capped at
+  // the 10 rows we reserved below. Without ARRAY_CONSTRAIN the array
+  // would spill into the next section's header (row 24) and #REF! out.
   sheet.getRange(row, 1).setFormula(
-    '=IFERROR(SORT(' +
+    '=IFERROR(ARRAY_CONSTRAIN(SORT(' +
       'ARRAYFORMULA({' +
         'IFERROR(VLOOKUP(stock!A2:A,sizes!A:B,2,FALSE),stock!A2:A),' +
         'stock!B2:B,' +
         'stock!B2:B*30,' +
         'IFERROR(VLOOKUP(stock!A2:A,prices!A:B,2,FALSE),0),' +
         'stock!B2:B*IFERROR(VLOOKUP(stock!A2:A,prices!A:B,2,FALSE),0)' +
-      '}),2,FALSE),"")'
+      '}),2,FALSE),10,5),"")'
   );
   // Reserve 10 rows for the table; format the value column as currency.
   sheet.getRange(row, 4, 10, 1).setNumberFormat('"₱"#,##0');
@@ -826,10 +827,10 @@ function buildDashboard() {
   row += 1;
   // QUERY aggregates by size for status=done. Column A holds the raw size
   // key; admins can correlate with the "Current stock by size" section
-  // above (which has the label). Keeping it as a single QUERY avoids
-  // the quote-escaping pain of joining sizes.label in here.
+  // above (which has the label). LIMIT 10 matches the reserved row count
+  // so the QUERY can't overflow into the next section's header.
   sheet.getRange(row, 1).setFormula(
-    "=IFERROR(QUERY(orders!E2:K,\"SELECT E, SUM(F), SUM(F*K) WHERE H = 'done' GROUP BY E LABEL E '', SUM(F) '', SUM(F*K) ''\",0),\"\")"
+    "=IFERROR(QUERY(orders!E2:K,\"SELECT E, SUM(F), SUM(F*K) WHERE H = 'done' GROUP BY E ORDER BY SUM(F*K) DESC LIMIT 10 LABEL E '', SUM(F) '', SUM(F*K) ''\",0),\"\")"
   );
   sheet.getRange(row, 3, 10, 1).setNumberFormat('"₱"#,##0');
   var revBySizeEnd = row + 9;
