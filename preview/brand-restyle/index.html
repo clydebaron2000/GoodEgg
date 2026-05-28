@@ -94,6 +94,7 @@
   }
   .top-nav .logo-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
   .top-nav .brand-text .app-name { font-family: 'DM Serif Display', serif; font-size: 20px; color: #fff; line-height: 1; }
+  .top-nav .brand-text .app-name .brand-accent { color: var(--yellow-300); }
   .top-nav .brand-text .app-sub  { font-size: 11px; color: rgba(255,255,255,0.65); margin-top: 1px; }
   .top-nav .mode-btns { display: flex; gap: 6px; }
   .mode-btn {
@@ -128,7 +129,7 @@
     transition: all .2s;
   }
   .tab-btn i { font-size: 20px; }
-  .tab-btn.active { color: var(--brown-700); border-bottom-color: var(--brown-700); }
+  .tab-btn.active { color: var(--brown-700); border-bottom-color: var(--yellow-500); }
 
   /* ── SCROLL BODY ── */
   .page { display: none; padding: 16px; flex: 1; }
@@ -214,9 +215,9 @@
   }
   .filter-chip:hover { background: var(--gray-bg); }
   .filter-chip.active {
-    background: var(--brown-700);
-    color: #fff;
-    border-color: var(--brown-700);
+    background: var(--yellow-500);
+    color: var(--brown-900);
+    border-color: var(--yellow-700);
   }
 
   /* ── STATUS SEGMENTED CONTROL (order cards) ── */
@@ -385,7 +386,7 @@
     <div class="brand">
       <div class="logo-icon"><img src="logo.jpg" alt="The Good Egg logo"></div>
       <div class="brand-text">
-        <div class="app-name">The Good Egg</div>
+        <div class="app-name">The <span class="brand-accent">Good</span> Egg</div>
         <div class="app-sub">Farm Fresh Eggs</div>
       </div>
     </div>
