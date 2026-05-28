@@ -39,12 +39,18 @@ function doPost(e) {
     // Admin actions: verify (adminId, pinHash) against the admins sheet.
     // On success we stamp data._admin with the resolved admin so downstream
     // handlers can attribute activity / event log entries to a real name.
+    //
+    // Backwards-compat: an OLDER client (pre-multi-admin) sends only
+    // {pinHash}. We accept that too — match against any active admin's
+    // pinHash, first hit wins. Lets the production deploy keep working
+    // while feature branches share the same Apps Script backend.
     var adminActions = ['addStock', 'deductStock', 'savePrices',
                         'updateOrderStatus', 'deleteOrder', 'changePIN',
                         'addSize', 'deleteSize',
                         'addAdmin', 'deleteAdmin', 'renameAdmin'];
     if (adminActions.indexOf(action) !== -1) {
       var admin = verifyAdminLogin_(data.adminId, data.pinHash);
+      if (!admin) admin = verifyLegacyLogin_(data.pinHash);
       if (!admin) return jsonResponse({ error: 'Invalid login', code: 'UNAUTHORIZED' });
       data._admin = admin;            // { id, name }
       data.actorName = admin.name;     // convenience for legacy callsites
@@ -220,10 +226,34 @@ function verifyAdminLogin_(adminId, pinHash) {
   return { id: admin.id, name: admin.name };
 }
 
-// Public endpoint called from the PIN screen. Returns { success, admin }.
+// Legacy login (pre-multi-admin clients): no adminId, just a pinHash.
+// We accept it if it matches ANY active admin's stored pinHash. The first
+// match wins for attribution. Lets the production deploy keep working
+// while a feature branch shares the same Apps Script backend.
+function verifyLegacyLogin_(pinHash) {
+  if (!pinHash) return null;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var admin = readAdmins(ss).find(function (a) {
+    return a.active && a.pinHash === pinHash;
+  });
+  if (admin) return { id: admin.id, name: admin.name };
+  // Older deployments may still only have the legacy config row before
+  // migrate() has been re-run. Accept that too.
+  var legacy = readConfig(ss, PIN_KEY);
+  if (legacy && legacy === pinHash) return { id: '_legacy', name: 'Admin' };
+  return null;
+}
+
+// Public endpoint called from the PIN screen. New clients send
+// (adminId, pinHash); legacy clients send only pinHash. Returns
+// { success: true, admin } on the new path, { success: true } on the
+// legacy path so old clients still light up admin mode.
 function doVerifyPIN(data) {
   var admin = verifyAdminLogin_(data.adminId, data.pinHash);
-  return admin ? { success: true, admin: admin } : { success: false };
+  if (admin) return { success: true, admin: admin };
+  admin = verifyLegacyLogin_(data.pinHash);
+  if (admin) return { success: true, admin: admin };  // new client field is harmless to old client
+  return { success: false };
 }
 
 // Insert a new admin row. Used by both addAdmin (API) and addAdminInteractive
@@ -307,18 +337,30 @@ function renameAdmin(data) {
   return { error: 'Admin not found' };
 }
 
-// Changes the LOGGED-IN admin's own PIN. data._admin came from the
-// auth gate in doPost, so we know exactly which row to update.
+// Changes the LOGGED-IN admin's own password. data._admin came from the
+// auth gate in doPost.
+//
+// Two paths:
+//   - Multi-admin login: update the admin's row in the admins sheet.
+//   - Legacy login (id = '_legacy'): the caller doesn't yet know which
+//     admin row they are, so we update the legacy config.adminPinHash.
 function changePIN(data) {
-  if (!data.newPinHash) return { error: 'No new PIN hash provided' };
-  if (!/^[0-9a-f]{64}$/i.test(data.newPinHash)) return { error: 'Invalid PIN hash' };
+  if (!data.newPinHash) return { error: 'No new password hash provided' };
+  if (!/^[0-9a-f]{64}$/i.test(data.newPinHash)) return { error: 'Invalid password hash' };
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (data._admin.id === '_legacy') {
+    writeConfig(ss, PIN_KEY, data.newPinHash);
+    logActivity(ss, 'Legacy admin password changed', data._admin.name);
+    return { success: true };
+  }
+
   var sheet = ss.getSheetByName(SHEET_ADMINS);
   var rows  = sheet.getDataRange().getValues();
   for (var i = 1; i < rows.length; i++) {
     if (rows[i][0] === data._admin.id) {
       sheet.getRange(i + 1, 3).setValue(data.newPinHash);
-      logActivity(ss, data._admin.name + ' changed their PIN', data._admin.name);
+      logActivity(ss, data._admin.name + ' changed their password', data._admin.name);
       return { success: true };
     }
   }
@@ -1105,22 +1147,22 @@ function addAdminInteractive() {
 
   var nameResp = ui.prompt(
     'Add an admin',
-    'Display name for the new admin (e.g. "Alice"):',
+    'Username for the new admin (anything you want — pick something the team will recognize, e.g. "sara"):',
     ui.ButtonSet.OK_CANCEL
   );
   if (nameResp.getSelectedButton() !== ui.Button.OK) return;
   var name = nameResp.getResponseText().trim();
-  if (!name) { ui.alert('Name is required.'); return; }
+  if (!name) { ui.alert('Username is required.'); return; }
 
   var pinResp = ui.prompt(
     'Add an admin',
-    'Choose a 4-digit PIN for ' + name + ':',
+    'Choose a numeric password for ' + name + ' (4–8 digits):',
     ui.ButtonSet.OK_CANCEL
   );
   if (pinResp.getSelectedButton() !== ui.Button.OK) return;
   var pin = pinResp.getResponseText().trim();
-  if (!/^\d{4}$/.test(pin)) {
-    ui.alert('PIN must be exactly 4 digits (0–9).');
+  if (!/^\d{4,8}$/.test(pin)) {
+    ui.alert('Password must be 4–8 digits, numeric only (0–9).');
     return;
   }
 
@@ -1131,9 +1173,9 @@ function addAdminInteractive() {
   }
   logActivity(ss, 'Added admin: ' + name + ' (via Apps Script editor)', 'system');
   ui.alert(
-    '✅ Added "' + name + '" with PIN ' + pin + '.\n\n' +
-    'They can sign in by picking their name on the PIN screen and entering that PIN. ' +
-    'They can change the PIN themselves once logged in.'
+    '✅ Added "' + name + '" with password ' + pin + '.\n\n' +
+    'They sign in by picking "' + name + '" on the sign-in screen and entering that password. ' +
+    'They can change their own password once signed in.'
   );
 }
 
