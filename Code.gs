@@ -10,6 +10,7 @@ var SHEET_PRICES       = 'prices';
 var SHEET_ORDERS       = 'orders';
 var SHEET_ACTIVITY     = 'activity';
 var SHEET_CONFIG       = 'config';
+var SHEET_SIZES        = 'sizes';
 var SHEET_STOCK_EVENTS = 'stock_events';
 var SHEET_PRICE_EVENTS = 'price_events';
 var PIN_KEY            = 'adminPinHash';
@@ -36,7 +37,8 @@ function doPost(e) {
 
     // Admin actions require valid PIN hash
     var adminActions = ['addStock', 'deductStock', 'savePrices',
-                        'updateOrderStatus', 'deleteOrder', 'changePIN'];
+                        'updateOrderStatus', 'deleteOrder', 'changePIN',
+                        'addSize', 'deleteSize'];
     if (adminActions.indexOf(action) !== -1) {
       if (!verifyPIN(data.pinHash)) {
         return jsonResponse({ error: 'Invalid PIN', code: 'UNAUTHORIZED' });
@@ -52,6 +54,8 @@ function doPost(e) {
       case 'updateOrderStatus': return jsonResponse(updateOrderStatus(data));
       case 'deleteOrder':       return jsonResponse(deleteOrder(data));
       case 'changePIN':         return jsonResponse(changePIN(data));
+      case 'addSize':           return jsonResponse(addSize(data));
+      case 'deleteSize':        return jsonResponse(deleteSize(data));
       default:                  return jsonResponse({ error: 'Unknown action' });
     }
   } catch (err) {
@@ -65,6 +69,7 @@ function doPost(e) {
 function getState() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   return {
+    sizes:        readSizes(ss),
     stock:        readStock(ss),
     prices:       readPrices(ss),
     orders:       readOrders(ss),
@@ -73,6 +78,97 @@ function getState() {
     priceEvents:  readPriceEvents(ss),
     ts:           Date.now()
   };
+}
+
+// ── SIZES ──────────────────────────────────────────────────────
+
+function readSizes(ss) {
+  var sheet = ss.getSheetByName(SHEET_SIZES);
+  if (!sheet) return [];
+  var rows = sheet.getDataRange().getValues();
+  var out  = [];
+  for (var i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    out.push({
+      key:       String(rows[i][0]),
+      label:     String(rows[i][1] || rows[i][0]),
+      sortOrder: Number(rows[i][2]) || 0
+    });
+  }
+  out.sort(function (a, b) { return a.sortOrder - b.sortOrder; });
+  return out;
+}
+
+function addSize(data) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var key   = String(data.key || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
+    var label = String(data.label || '').trim() || key;
+    if (!key) return { error: 'Size key is required' };
+
+    var sizes = readSizes(ss);
+    if (sizes.some(function (s) { return s.key === key; })) {
+      return { error: 'Size "' + key + '" already exists' };
+    }
+    var nextOrder = sizes.reduce(function (m, s) { return Math.max(m, s.sortOrder); }, 0) + 1;
+
+    ss.getSheetByName(SHEET_SIZES).appendRow([key, asText_(label), nextOrder]);
+    // Seed companion rows in stock and prices so the new size appears
+    // everywhere downstream calls expect it.
+    ss.getSheetByName(SHEET_STOCK ).appendRow([key, 0]);
+    ss.getSheetByName(SHEET_PRICES).appendRow([key, 0]);
+
+    logActivity(ss, 'Added egg size: ' + label + ' (' + key + ')');
+    return { success: true, state: getState() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function deleteSize(data) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var ss  = SpreadsheetApp.getActiveSpreadsheet();
+    var key = String(data.key || '');
+    if (!key) return { error: 'Size key is required' };
+
+    // Capture details for the activity log before we wipe anything.
+    var sizes = readSizes(ss);
+    var size  = sizes.find(function (s) { return s.key === key; });
+    if (!size) return { error: 'Size not found' };
+    var label = size.label;
+
+    var trays = deleteRowByKey_(ss.getSheetByName(SHEET_STOCK),  key, 1);
+    var price = deleteRowByKey_(ss.getSheetByName(SHEET_PRICES), key, 1);
+    deleteRowByKey_(ss.getSheetByName(SHEET_SIZES), key, 0);
+
+    var msg = 'Deleted egg size: ' + label + ' (' + key + ')';
+    if (trays > 0) msg += ' — erased ' + trays + ' tray' + plural(trays) + ' of stock';
+    if (price > 0) msg += (trays > 0 ? ', priced' : ' — priced') + ' at ₱' + price + '/tray';
+    logActivity(ss, msg);
+    return { success: true, state: getState() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Helper: delete the first row in `sheet` whose column 0 == key; returns
+// the value of column `valueCol` from that row before deletion (or 0 if
+// no row matched / no value column needed).
+function deleteRowByKey_(sheet, key, valueCol) {
+  if (!sheet) return 0;
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (rows[i][0] === key) {
+      var value = valueCol >= 0 ? (Number(rows[i][valueCol]) || 0) : 0;
+      sheet.deleteRow(i + 1);
+      return value;
+    }
+  }
+  return 0;
 }
 
 // ── PIN ────────────────────────────────────────────────────────
@@ -529,6 +625,15 @@ function setupSpreadsheet() {
     orders.getRange('A1:K1').setFontWeight('bold');
   }
 
+  // Sizes (key → label + sort order). The canonical list of egg sizes.
+  var sizes = getOrCreate(ss, SHEET_SIZES);
+  if (sizes.getLastRow() === 0) {
+    sizes.appendRow(['key','label','sortOrder']);
+    [['small','Small',1],['medium','Medium',2],['large','Large',3],['xl','XL',4],['jumbo','Jumbo',5]]
+      .forEach(function (r) { sizes.appendRow(r); });
+    sizes.getRange('A1:C1').setFontWeight('bold');
+  }
+
   // Stock events (structured restock/sale log)
   var stockEv = getOrCreate(ss, SHEET_STOCK_EVENTS);
   if (stockEv.getLastRow() === 0) {
@@ -587,6 +692,7 @@ function migrate() {
   ensureAllSheets_(ss, report);
   upgradeActivitySchema_(ss, report);
   upgradeOrdersSchema_(ss, report);
+  seedSizesSheet_(ss, report);
   backfillUnitPrice_(ss, report);
   backfillStockEvents_(ss, report);
   migratePinToConfigSheet_(ss, report);
@@ -649,6 +755,12 @@ function ensureAllSheets_(ss, report) {
     c.getRange('A1:B1').setFontWeight('bold');
     report.push('• Created `config` sheet');
   }
+  if (!ss.getSheetByName(SHEET_SIZES)) {
+    var sz = ss.insertSheet(SHEET_SIZES);
+    sz.appendRow(['key','label','sortOrder']);
+    sz.getRange('A1:C1').setFontWeight('bold');
+    report.push('• Created `sizes` sheet');
+  }
   if (!ss.getSheetByName(SHEET_STOCK_EVENTS)) {
     var se = ss.insertSheet(SHEET_STOCK_EVENTS);
     se.appendRow(['createdAt','time','size','delta','reason','before','after','note','actor']);
@@ -690,6 +802,44 @@ function upgradeOrdersSchema_(ss, report) {
     orders.getRange(1, 11).setValue('unitPrice').setFontWeight('bold');
     report.push('• Added `orders.unitPrice` column');
   }
+}
+
+// 2b. Populate the sizes sheet from whichever keys exist in stock/prices.
+// Idempotent: skipped if the sizes sheet already has rows. Default labels
+// are used for the original 5 keys; anything else gets a capitalized fallback.
+function seedSizesSheet_(ss, report) {
+  var sheet = ss.getSheetByName(SHEET_SIZES);
+  if (!sheet || sheet.getLastRow() > 1) return;
+
+  var keys = {};
+  [SHEET_STOCK, SHEET_PRICES].forEach(function (name) {
+    var s = ss.getSheetByName(name);
+    if (!s) return;
+    var rows = s.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0]) keys[rows[i][0]] = true;
+    }
+  });
+
+  var DEFAULT_LABELS = { small:'Small', medium:'Medium', large:'Large', xl:'XL', jumbo:'Jumbo' };
+  var DEFAULT_ORDER  = ['small','medium','large','xl','jumbo'];
+
+  var order = 1;
+  var added = 0;
+  DEFAULT_ORDER.forEach(function (k) {
+    if (keys[k]) {
+      sheet.appendRow([k, asText_(DEFAULT_LABELS[k]), order++]);
+      delete keys[k];
+      added++;
+    }
+  });
+  // Any custom sizes that aren't in the default list keep their order
+  Object.keys(keys).forEach(function (k) {
+    var label = DEFAULT_LABELS[k] || (k.charAt(0).toUpperCase() + k.slice(1));
+    sheet.appendRow([k, asText_(label), order++]);
+    added++;
+  });
+  if (added) report.push('• Seeded `sizes` sheet with ' + added + ' size' + (added === 1 ? '' : 's') + ' from existing stock/prices');
 }
 
 // 3. For any order without a unitPrice, fill it in from current prices.
@@ -808,7 +958,8 @@ function applyTextFormats_(ss, report) {
     { sheet: SHEET_ORDERS,        ranges: ['B:D', 'G:G', 'I:I'] },         // name, contact, address; notes; time
     { sheet: SHEET_STOCK_EVENTS,  ranges: ['B:B', 'E:E', 'H:H', 'I:I'] },  // time, reason, note, actor
     { sheet: SHEET_PRICE_EVENTS,  ranges: ['B:B', 'F:F'] },                // time, actor
-    { sheet: SHEET_CONFIG,        ranges: ['B:B'] }                        // value (PIN hash etc. — pure strings)
+    { sheet: SHEET_CONFIG,        ranges: ['B:B'] },                       // value (PIN hash etc. — pure strings)
+    { sheet: SHEET_SIZES,         ranges: ['B:B'] }                        // label (freeform)
   ];
   var touched = 0;
   textCols.forEach(function (entry) {
