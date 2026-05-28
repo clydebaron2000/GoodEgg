@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="The Good Egg">
 <meta name="theme-color" content="#6B4226">
 <title>The Good Egg – Farm Fresh Eggs</title>
+<meta name="description" content="Tracking your farm fresh eggs — inventory, pricing, and orders for The Good Egg farm.">
 <link rel="icon" type="image/jpeg" href="logo.jpg">
 <link rel="apple-touch-icon" href="logo.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -34,11 +35,17 @@
     --yellow-300: #F4D78A;
     --yellow-100: #FAEEC9;
 
-    /* Status — kept warm to fit the palette */
-    --amber-800: #633806;
-    --amber-50:  #FAEEDA;
-    --red-800:   #501313;
-    --red-50:    #FCEBEB;
+    /* Status trio — earth-tone analogues that share brown's warm undertone.
+       Picked for color-theory harmony with the brand: each is in the same
+       warm quadrant as #6B4226 (yellow-green / golden-ochre / terracotta)
+       so the indicators read as semantically distinct without clashing
+       with the rest of the palette. */
+    --sage-800:  #4F6128;   /* In stock / good — warm olive */
+    --sage-50:   #E5ECCC;
+    --amber-800: #7A4D14;   /* Low stock / warning — rich ochre */
+    --amber-50:  #F7E4C3;
+    --red-800:   #7A2E1F;   /* Out of stock / danger — warm terracotta */
+    --red-50:    #F5D5C5;
 
     /* Surfaces */
     --gray-bg:   #FBF6E9;   /* page background (warm cream) */
@@ -160,7 +167,7 @@
 
   /* ── BADGES ── */
   .badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
-  .badge-good { background: var(--brown-50);  color: var(--brown-800); }
+  .badge-good { background: var(--sage-50);   color: var(--sage-800); }
   .badge-low  { background: var(--amber-50);  color: var(--amber-800); }
   .badge-out  { background: var(--red-50);    color: var(--red-800); }
 
@@ -347,7 +354,7 @@
 <!-- PIN SCREEN -->
 <div id="pin-screen" class="pin-screen" style="display:none;">
   <img src="logo.jpg" alt="The Good Egg" class="pin-logo-img">
-  <div class="pin-sub">Enter admin PIN to manage inventory</div>
+  <div class="pin-sub">Tracking your farm fresh eggs</div>
   <div class="pin-dots" id="pin-dots">
     <div class="pin-dot" id="dot0"></div>
     <div class="pin-dot" id="dot1"></div>
@@ -1049,7 +1056,7 @@ function renderInventory() {
 
   const log = (state.activity || []).slice(-10).reverse();
   document.getElementById('activity-log').innerHTML = log.length === 0
-    ? '<div class="empty-state" style="padding:20px;"><i class="ti ti-notes" style="font-size:28px;color:var(--text-ter);display:block;margin-bottom:8px;"></i><p>No activity yet.</p></div>'
+    ? '<div class="empty-state" style="padding:20px;"><i class="ti ti-notes" style="font-size:28px;color:var(--text-ter);display:block;margin-bottom:8px;"></i><p>Quiet farm. Activity shows here as eggs come in and orders go out.</p></div>'
     : log.map(a => `
       <div class="activity-item">
         <span class="activity-text">${a.action}</span>
@@ -1129,7 +1136,7 @@ function renderOrders() {
 
   if (total === 0) {
     document.getElementById('order-count-label').textContent = '';
-    container.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i><p>No orders yet.</p></div>`;
+    container.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i><p>No orders yet — your farm fresh eggs are ready when they are.</p></div>`;
     return;
   }
 
@@ -1663,7 +1670,7 @@ if (SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
   const manifest = {
     name: "The Good Egg – Farm Fresh Eggs",
     short_name: "The Good Egg",
-    description: "Egg inventory, pricing, and orders for the farm",
+    description: "Tracking your farm fresh eggs — inventory, pricing, and orders.",
     start_url: ".",
     display: "standalone",
     background_color: "#FBF6E9",
