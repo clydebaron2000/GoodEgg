@@ -622,10 +622,12 @@ const POLL_INTERVAL = 30000; // refresh every 30 seconds
 // STATE
 // ═══════════════════════════════════════════════
 let state = {
-  stock:    { small:0, medium:0, large:0, xl:0, jumbo:0 },
-  prices:   { small:120, medium:140, large:160, xl:175, jumbo:180 },
-  orders:   [],
-  activity: []
+  stock:       { small:0, medium:0, large:0, xl:0, jumbo:0 },
+  prices:      { small:120, medium:140, large:160, xl:175, jumbo:180 },
+  orders:      [],
+  activity:    [],
+  stockEvents: [],   // structured restock/sale log (for analytics)
+  priceEvents: []    // structured price-change log (for analytics)
 };
 let isAdmin         = false;
 let pinBuffer       = '';
@@ -697,10 +699,12 @@ async function loadState() {
 }
 
 function applyState(data) {
-  if (data.stock)    state.stock    = data.stock;
-  if (data.prices)   state.prices   = data.prices;
-  if (data.orders)   state.orders   = data.orders;
-  if (data.activity) state.activity = data.activity;
+  if (data.stock)       state.stock       = data.stock;
+  if (data.prices)      state.prices      = data.prices;
+  if (data.orders)      state.orders      = data.orders;
+  if (data.activity)    state.activity    = data.activity;
+  if (data.stockEvents) state.stockEvents = data.stockEvents;
+  if (data.priceEvents) state.priceEvents = data.priceEvents;
   renderAll();
 }
 
@@ -1018,7 +1022,11 @@ function renderOrders() {
 }
 
 function orderCard(o) {
-  const value       = (state.prices[o.size] || 0) * o.trays;
+  // Prefer the snapshotted unitPrice (locked at submit time) so revenue
+  // doesn't shift retroactively when prices change. Fall back to the
+  // current price for pre-migration orders that don't have one.
+  const unit        = (o.unitPrice != null && Number(o.unitPrice) > 0) ? Number(o.unitPrice) : (state.prices[o.size] || 0);
+  const value       = unit * o.trays;
   const statusClass = o.status === 'pending' ? 'badge-low' : o.status === 'confirmed' ? 'badge-good' : 'badge-good';
   const statuses    = ['pending','confirmed','done'];
   return `

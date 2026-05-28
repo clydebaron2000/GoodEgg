@@ -5,12 +5,15 @@
 // Deploy as: Execute as Me | Access: Anyone (anonymous)
 // ══════════════════════════════════════════════════════════════
 
-var SHEET_STOCK    = 'stock';
-var SHEET_PRICES   = 'prices';
-var SHEET_ORDERS   = 'orders';
-var SHEET_ACTIVITY = 'activity';
-var SHEET_CONFIG   = 'config';
-var PIN_KEY        = 'adminPinHash';
+var SHEET_STOCK        = 'stock';
+var SHEET_PRICES       = 'prices';
+var SHEET_ORDERS       = 'orders';
+var SHEET_ACTIVITY     = 'activity';
+var SHEET_CONFIG       = 'config';
+var SHEET_STOCK_EVENTS = 'stock_events';
+var SHEET_PRICE_EVENTS = 'price_events';
+var PIN_KEY            = 'adminPinHash';
+var EVENT_PAGE_SIZE    = 500;  // cap events returned by getState (most recent first)
 
 var SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large', xl: 'XL', jumbo: 'Jumbo' };
 
@@ -62,11 +65,13 @@ function doPost(e) {
 function getState() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   return {
-    stock:    readStock(ss),
-    prices:   readPrices(ss),
-    orders:   readOrders(ss),
-    activity: readActivity(ss),
-    ts:       Date.now()
+    stock:        readStock(ss),
+    prices:       readPrices(ss),
+    orders:       readOrders(ss),
+    activity:     readActivity(ss),
+    stockEvents:  readStockEvents(ss),
+    priceEvents:  readPriceEvents(ss),
+    ts:           Date.now()
   };
 }
 
@@ -149,15 +154,20 @@ function addStock(data) {
     var ss    = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(SHEET_STOCK);
     var rows  = sheet.getDataRange().getValues();
+    var trays = Number(data.trays);
+    var before = 0, after = 0;
     for (var i = 1; i < rows.length; i++) {
       if (rows[i][0] === data.size) {
-        sheet.getRange(i + 1, 2).setValue(rows[i][1] + Number(data.trays));
+        before = Number(rows[i][1]) || 0;
+        after  = before + trays;
+        sheet.getRange(i + 1, 2).setValue(after);
         break;
       }
     }
     var label = sizeLabel(data.size);
     var note  = data.note ? ' — ' + data.note : '';
-    logActivity(ss, '+' + data.trays + ' tray' + plural(data.trays) + ' ' + label + note);
+    logActivity(ss, '+' + trays + ' tray' + plural(trays) + ' ' + label + note);
+    logStockEvent(ss, { size: data.size, delta: trays, reason: 'restock', before: before, after: after, note: data.note || '' });
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -171,17 +181,21 @@ function deductStock(data) {
     var ss    = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(SHEET_STOCK);
     var rows  = sheet.getDataRange().getValues();
+    var trays = Number(data.trays);
+    var before = 0, after = 0;
     for (var i = 1; i < rows.length; i++) {
       if (rows[i][0] === data.size) {
-        var current = rows[i][1];
-        if (Number(data.trays) > current) {
+        before = Number(rows[i][1]) || 0;
+        if (trays > before) {
           return { error: 'Not enough stock', code: 'INSUFFICIENT_STOCK' };
         }
-        sheet.getRange(i + 1, 2).setValue(current - Number(data.trays));
+        after = before - trays;
+        sheet.getRange(i + 1, 2).setValue(after);
         break;
       }
     }
-    logActivity(ss, '-' + data.trays + ' tray' + plural(data.trays) + ' ' + sizeLabel(data.size) + ' (sold)');
+    logActivity(ss, '-' + trays + ' tray' + plural(trays) + ' ' + sizeLabel(data.size) + ' (sold)');
+    logStockEvent(ss, { size: data.size, delta: -trays, reason: 'sold', before: before, after: after, note: data.note || '' });
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -198,16 +212,23 @@ function readPrices(ss) {
 }
 
 function savePrices(data) {
-  var ss    = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(SHEET_PRICES);
-  var rows  = sheet.getDataRange().getValues();
+  var ss      = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet   = ss.getSheetByName(SHEET_PRICES);
+  var rows    = sheet.getDataRange().getValues();
+  var changes = 0;
   for (var i = 1; i < rows.length; i++) {
     var size = rows[i][0];
     if (data.prices[size] !== undefined) {
-      sheet.getRange(i + 1, 2).setValue(Number(data.prices[size]));
+      var oldPrice = Number(rows[i][1]) || 0;
+      var newPrice = Number(data.prices[size]) || 0;
+      if (oldPrice !== newPrice) {
+        sheet.getRange(i + 1, 2).setValue(newPrice);
+        logPriceEvent(ss, { size: size, oldPrice: oldPrice, newPrice: newPrice });
+        changes++;
+      }
     }
   }
-  logActivity(ss, 'Prices updated');
+  if (changes > 0) logActivity(ss, 'Prices updated (' + changes + ' size' + plural(changes) + ')');
   return { success: true, state: getState() };
 }
 
@@ -227,7 +248,8 @@ function readOrders(ss) {
       notes:     rows[i][6],
       status:    rows[i][7],
       time:      rows[i][8],
-      createdAt: rows[i][9] || null  // epoch ms; null for pre-migration rows
+      createdAt: rows[i][9]  || null,  // epoch ms; null for pre-migration rows
+      unitPrice: rows[i][10] || null   // PHP/tray snapshotted at submit time
     });
   }
   return orders;
@@ -249,10 +271,16 @@ function submitOrder(data) {
     }
 
     var o = data.order;
+    // Lock in the current price as the order's unit price. Server-side so
+    // a tampered client can't underreport revenue, and so later price
+    // changes don't rewrite history.
+    var currentPrices = readPrices(ss);
+    var unitPrice     = Number(currentPrices[o.size]) || 0;
     sheet.appendRow([
       o.id, o.name, o.contact, o.address,
       o.size, o.trays, o.notes || '', 'pending', o.time,
-      o.createdAt || Date.now()
+      o.createdAt || Date.now(),
+      unitPrice
     ]);
     logActivity(ss, 'Order: ' + o.name + ' — ' + o.trays + ' tray' + plural(o.trays) + ' ' + sizeLabel(o.size));
     return { success: true, state: getState() };
@@ -316,6 +344,73 @@ function logActivity(ss, action) {
   ss.getSheetByName(SHEET_ACTIVITY).appendRow([action, time]);
 }
 
+// ── STRUCTURED EVENT LOGS ──────────────────────────────────────
+// These are append-only tables intended for dashboards/analytics.
+// The freeform `activity` sheet stays for human-readable display.
+
+function logStockEvent(ss, data) {
+  var sheet = ss.getSheetByName(SHEET_STOCK_EVENTS);
+  if (!sheet) return;  // run setupSpreadsheet to create
+  var ts    = Date.now();
+  var label = Utilities.formatDate(new Date(ts), Session.getScriptTimeZone(), 'MMM d, h:mm a');
+  sheet.appendRow([
+    ts, label, data.size, data.delta, data.reason,
+    data.before, data.after, data.note || '', 'admin'
+  ]);
+}
+
+function logPriceEvent(ss, data) {
+  var sheet = ss.getSheetByName(SHEET_PRICE_EVENTS);
+  if (!sheet) return;
+  var ts    = Date.now();
+  var label = Utilities.formatDate(new Date(ts), Session.getScriptTimeZone(), 'MMM d, h:mm a');
+  sheet.appendRow([
+    ts, label, data.size, data.oldPrice, data.newPrice, 'admin'
+  ]);
+}
+
+function readStockEvents(ss) {
+  var sheet = ss.getSheetByName(SHEET_STOCK_EVENTS);
+  if (!sheet) return [];
+  var rows  = sheet.getDataRange().getValues();
+  var out   = [];
+  // Cap to the last EVENT_PAGE_SIZE rows to keep payload reasonable.
+  var start = Math.max(1, rows.length - EVENT_PAGE_SIZE);
+  for (var i = start; i < rows.length; i++) {
+    out.push({
+      createdAt: rows[i][0],
+      time:      rows[i][1],
+      size:      rows[i][2],
+      delta:     Number(rows[i][3]) || 0,
+      reason:    rows[i][4],
+      before:    Number(rows[i][5]) || 0,
+      after:     Number(rows[i][6]) || 0,
+      note:      rows[i][7] || '',
+      actor:     rows[i][8] || 'admin'
+    });
+  }
+  return out;
+}
+
+function readPriceEvents(ss) {
+  var sheet = ss.getSheetByName(SHEET_PRICE_EVENTS);
+  if (!sheet) return [];
+  var rows  = sheet.getDataRange().getValues();
+  var out   = [];
+  var start = Math.max(1, rows.length - EVENT_PAGE_SIZE);
+  for (var i = start; i < rows.length; i++) {
+    out.push({
+      createdAt: rows[i][0],
+      time:      rows[i][1],
+      size:      rows[i][2],
+      oldPrice:  Number(rows[i][3]) || 0,
+      newPrice:  Number(rows[i][4]) || 0,
+      actor:     rows[i][5] || 'admin'
+    });
+  }
+  return out;
+}
+
 // ── HELPERS ────────────────────────────────────────────────────
 
 function jsonResponse(obj) {
@@ -371,8 +466,22 @@ function setupSpreadsheet() {
   // Orders
   var orders = getOrCreate(ss, SHEET_ORDERS);
   if (orders.getLastRow() === 0) {
-    orders.appendRow(['id','name','contact','address','size','trays','notes','status','time','createdAt']);
-    orders.getRange('A1:J1').setFontWeight('bold');
+    orders.appendRow(['id','name','contact','address','size','trays','notes','status','time','createdAt','unitPrice']);
+    orders.getRange('A1:K1').setFontWeight('bold');
+  }
+
+  // Stock events (structured restock/sale log)
+  var stockEv = getOrCreate(ss, SHEET_STOCK_EVENTS);
+  if (stockEv.getLastRow() === 0) {
+    stockEv.appendRow(['createdAt','time','size','delta','reason','before','after','note','actor']);
+    stockEv.getRange('A1:I1').setFontWeight('bold');
+  }
+
+  // Price events (structured price change log)
+  var priceEv = getOrCreate(ss, SHEET_PRICE_EVENTS);
+  if (priceEv.getLastRow() === 0) {
+    priceEv.appendRow(['createdAt','time','size','oldPrice','newPrice','actor']);
+    priceEv.getRange('A1:F1').setFontWeight('bold');
   }
 
   // Activity
