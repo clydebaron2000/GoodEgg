@@ -507,6 +507,8 @@ function setupSpreadsheet() {
     writeConfig(ss, PIN_KEY, legacy || sha256Hex('1234'));
   }
 
+  applyTextFormats_(ss, []);  // freeform columns must not be parsed as formulas
+
   showResult_('✅ EggTrack setup complete!\n\nDefault admin PIN is: 1234\nChange it in the app after first login.');
 }
 
@@ -531,6 +533,7 @@ function migrate() {
   backfillUnitPrice_(ss, report);
   backfillStockEvents_(ss, report);
   migratePinToConfigSheet_(ss, report);
+  applyTextFormats_(ss, report);
 
   var body = report.length
     ? report.join('\n')
@@ -690,6 +693,30 @@ function backfillStockEvents_(ss, report) {
     '• Backfilled ' + parsed.length + ' `stock_events` from activity log ' +
     '(createdAt = 0 marks them as historical — they appear under "All time" but not in N-day filters)'
   );
+}
+
+// 6. Force freeform text columns to "Plain text" number format. Without
+// this, values that start with =, +, -, or @ get evaluated as formulas
+// when written to the sheet — e.g. "+7 trays Medium" shows as #ERROR!.
+// Idempotent and cheap: setting the format on a whole column is one op.
+function applyTextFormats_(ss, report) {
+  var textCols = [
+    { sheet: SHEET_ACTIVITY,      ranges: ['A:A'] },                       // action
+    { sheet: SHEET_ORDERS,        ranges: ['B:D', 'G:G', 'I:I'] },         // name, contact, address; notes; time
+    { sheet: SHEET_STOCK_EVENTS,  ranges: ['B:B', 'E:E', 'H:H', 'I:I'] },  // time, reason, note, actor
+    { sheet: SHEET_PRICE_EVENTS,  ranges: ['B:B', 'F:F'] },                // time, actor
+    { sheet: SHEET_CONFIG,        ranges: ['B:B'] }                        // value (PIN hash etc. — pure strings)
+  ];
+  var touched = 0;
+  textCols.forEach(function (entry) {
+    var sheet = ss.getSheetByName(entry.sheet);
+    if (!sheet) return;
+    entry.ranges.forEach(function (a1) {
+      sheet.getRange(a1).setNumberFormat('@');
+    });
+    touched++;
+  });
+  if (touched) report.push('• Set plain-text format on freeform columns in ' + touched + ' sheet' + (touched === 1 ? '' : 's'));
 }
 
 // 5. Move admin PIN out of Script Properties into the config sheet.
