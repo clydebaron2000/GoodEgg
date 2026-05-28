@@ -279,10 +279,11 @@ function submitOrder(data) {
     // changes don't rewrite history.
     var currentPrices = readPrices(ss);
     var unitPrice     = Number(currentPrices[o.size]) || 0;
+    var createdAt     = o.createdAt || Date.now();
     sheet.appendRow([
       o.id, asText_(o.name), asText_(o.contact), asText_(o.address),
-      o.size, o.trays, asText_(o.notes || ''), 'pending', o.time,
-      o.createdAt || Date.now(),
+      o.size, o.trays, asText_(o.notes || ''), 'pending', utcLabel_(createdAt),
+      createdAt,
       unitPrice
     ]);
     logActivity(ss, 'Order: ' + o.name + ' — ' + o.trays + ' tray' + plural(o.trays) + ' ' + sizeLabel(o.size));
@@ -382,9 +383,15 @@ function readActivity(ss) {
 }
 
 function logActivity(ss, action) {
-  var ts    = Date.now();
-  var time  = Utilities.formatDate(new Date(ts), Session.getScriptTimeZone(), 'MMM d, h:mm a');
-  ss.getSheetByName(SHEET_ACTIVITY).appendRow([asText_(action), time, ts]);
+  var ts = Date.now();
+  ss.getSheetByName(SHEET_ACTIVITY).appendRow([asText_(action), utcLabel_(ts), ts]);
+}
+
+// All sheet "time" strings are written in UTC so anyone opening the Sheet
+// directly sees a consistent, unambiguous timestamp regardless of their
+// timezone. The UI converts to local via formatTime(createdAt) on the client.
+function utcLabel_(ts) {
+  return Utilities.formatDate(new Date(ts), 'UTC', 'MMM d, h:mm a') + ' UTC';
 }
 
 // Escape strings that start with a Sheets formula starter (=, +, -, @) so
@@ -405,10 +412,9 @@ function asText_(v) {
 function logStockEvent(ss, data) {
   var sheet = ss.getSheetByName(SHEET_STOCK_EVENTS);
   if (!sheet) return;  // run setupSpreadsheet to create
-  var ts    = Date.now();
-  var label = Utilities.formatDate(new Date(ts), Session.getScriptTimeZone(), 'MMM d, h:mm a');
+  var ts = Date.now();
   sheet.appendRow([
-    ts, label, data.size, data.delta, data.reason,
+    ts, utcLabel_(ts), data.size, data.delta, data.reason,
     data.before, data.after, asText_(data.note || ''), 'admin'
   ]);
 }
@@ -416,10 +422,9 @@ function logStockEvent(ss, data) {
 function logPriceEvent(ss, data) {
   var sheet = ss.getSheetByName(SHEET_PRICE_EVENTS);
   if (!sheet) return;
-  var ts    = Date.now();
-  var label = Utilities.formatDate(new Date(ts), Session.getScriptTimeZone(), 'MMM d, h:mm a');
+  var ts = Date.now();
   sheet.appendRow([
-    ts, label, data.size, data.oldPrice, data.newPrice, 'admin'
+    ts, utcLabel_(ts), data.size, data.oldPrice, data.newPrice, 'admin'
   ]);
 }
 

@@ -1409,7 +1409,15 @@ function updateNewPinDots() {
 // HELPERS
 // ═══════════════════════════════════════════════
 function now() {
-  return new Date().toLocaleString('en-PH', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  // Universal label so the sheet is unambiguous to anyone reading it directly.
+  // The UI converts createdAt → user's local time via formatTime(); this
+  // string is only the audit-log fallback.
+  return new Date().toLocaleString('en-US', {
+    month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+    hour12: true,
+    timeZone: 'UTC'
+  }) + ' UTC';
 }
 
 function showToast(msg, isError = false) {
