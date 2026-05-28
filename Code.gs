@@ -510,3 +510,182 @@ function setupSpreadsheet() {
 function getOrCreate(ss, name) {
   return ss.getSheetByName(name) || ss.insertSheet(name);
 }
+
+// ── MIGRATION ──────────────────────────────────────────────────
+// Idempotent upgrade path for existing deployments. Safe to re-run.
+// Creates any missing sheets, adds any missing columns, and backfills
+// data where it's possible to reconstruct (orders.unitPrice from
+// current prices, stock_events from the activity log).
+//
+// Run manually from the Apps Script editor whenever Code.gs is updated.
+
+function migrate() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var report = [];
+
+  ensureAllSheets_(ss, report);
+  upgradeOrdersSchema_(ss, report);
+  backfillUnitPrice_(ss, report);
+  backfillStockEvents_(ss, report);
+  migratePinToConfigSheet_(ss, report);
+
+  var body = report.length
+    ? report.join('\n')
+    : 'Already up to date — nothing to migrate.';
+  SpreadsheetApp.getUi().alert(
+    'EggTrack migration complete.\n\n' + body +
+    '\n\nThis function is idempotent — re-run it any time after a Code.gs update.'
+  );
+}
+
+// 1. Make sure every sheet exists with its current header.
+function ensureAllSheets_(ss, report) {
+  if (!ss.getSheetByName(SHEET_STOCK)) {
+    var s = ss.insertSheet(SHEET_STOCK);
+    s.appendRow(['size','trays']);
+    ['small','medium','large','xl','jumbo'].forEach(function (k) { s.appendRow([k, 0]); });
+    s.getRange('A1:B1').setFontWeight('bold');
+    report.push('• Created `stock` sheet');
+  }
+  if (!ss.getSheetByName(SHEET_PRICES)) {
+    var p = ss.insertSheet(SHEET_PRICES);
+    p.appendRow(['size','perTray']);
+    [['small',120],['medium',140],['large',160],['xl',175],['jumbo',180]]
+      .forEach(function (r) { p.appendRow(r); });
+    p.getRange('A1:B1').setFontWeight('bold');
+    report.push('• Created `prices` sheet');
+  }
+  if (!ss.getSheetByName(SHEET_ORDERS)) {
+    var o = ss.insertSheet(SHEET_ORDERS);
+    o.appendRow(['id','name','contact','address','size','trays','notes','status','time','createdAt','unitPrice']);
+    o.getRange('A1:K1').setFontWeight('bold');
+    report.push('• Created `orders` sheet');
+  }
+  if (!ss.getSheetByName(SHEET_ACTIVITY)) {
+    var a = ss.insertSheet(SHEET_ACTIVITY);
+    a.appendRow(['action','time']);
+    a.getRange('A1:B1').setFontWeight('bold');
+    report.push('• Created `activity` sheet');
+  }
+  if (!ss.getSheetByName(SHEET_CONFIG)) {
+    var c = ss.insertSheet(SHEET_CONFIG);
+    c.appendRow(['key','value']);
+    c.getRange('A1:B1').setFontWeight('bold');
+    report.push('• Created `config` sheet');
+  }
+  if (!ss.getSheetByName(SHEET_STOCK_EVENTS)) {
+    var se = ss.insertSheet(SHEET_STOCK_EVENTS);
+    se.appendRow(['createdAt','time','size','delta','reason','before','after','note','actor']);
+    se.getRange('A1:I1').setFontWeight('bold');
+    report.push('• Created `stock_events` sheet');
+  }
+  if (!ss.getSheetByName(SHEET_PRICE_EVENTS)) {
+    var pe = ss.insertSheet(SHEET_PRICE_EVENTS);
+    pe.appendRow(['createdAt','time','size','oldPrice','newPrice','actor']);
+    pe.getRange('A1:F1').setFontWeight('bold');
+    report.push('• Created `price_events` sheet');
+  }
+}
+
+// 2. Add missing columns to an older `orders` sheet (createdAt, unitPrice).
+function upgradeOrdersSchema_(ss, report) {
+  var orders = ss.getSheetByName(SHEET_ORDERS);
+  if (!orders) return;
+  // Read enough columns to inspect headers J and K.
+  var width   = Math.max(orders.getLastColumn(), 11);
+  var headers = orders.getRange(1, 1, 1, width).getValues()[0];
+  if (headers[9] !== 'createdAt') {
+    orders.getRange(1, 10).setValue('createdAt').setFontWeight('bold');
+    report.push('• Added `orders.createdAt` column');
+  }
+  if (headers[10] !== 'unitPrice') {
+    orders.getRange(1, 11).setValue('unitPrice').setFontWeight('bold');
+    report.push('• Added `orders.unitPrice` column');
+  }
+}
+
+// 3. For any order without a unitPrice, fill it in from current prices.
+// Better than null for revenue math, even if an old price would be more
+// accurate (we can't recover that).
+function backfillUnitPrice_(ss, report) {
+  var orders = ss.getSheetByName(SHEET_ORDERS);
+  if (!orders || orders.getLastRow() < 2) return;
+  var prices = readPrices(ss);
+  var rows   = orders.getRange(2, 1, orders.getLastRow() - 1, 11).getValues();
+  var n = 0;
+  for (var i = 0; i < rows.length; i++) {
+    if (!rows[i][10]) {  // unitPrice empty
+      var p = Number(prices[rows[i][4]]) || 0;
+      if (p > 0) {
+        orders.getRange(i + 2, 11).setValue(p);
+        n++;
+      }
+    }
+  }
+  if (n) report.push('• Backfilled `unitPrice` on ' + n + ' existing order' + (n === 1 ? '' : 's') + ' (using current prices)');
+}
+
+// 4. Reconstruct stock_events from the freeform activity log. Only runs
+// once — if stock_events already has data, we assume it's authoritative.
+// before/after are computed by walking backward from current stock; if
+// the activity log is incomplete those numbers will be off by a constant,
+// but the deltas are always correct.
+function backfillStockEvents_(ss, report) {
+  var stockEv = ss.getSheetByName(SHEET_STOCK_EVENTS);
+  if (!stockEv || stockEv.getLastRow() > 1) return;
+  var act = ss.getSheetByName(SHEET_ACTIVITY);
+  if (!act || act.getLastRow() < 2) return;
+
+  var arows = act.getDataRange().getValues();
+  // Matches "+10 trays Large — note" or "-3 trays Medium (sold)"
+  var re = /^([+-])(\d+)\s+trays?\s+(Small|Medium|Large|XL|Jumbo)(?:\s+\(sold\))?(?:\s+—\s+(.*))?\s*$/;
+  var parsed = [];
+  for (var i = 1; i < arows.length; i++) {
+    var text = String(arows[i][0]);
+    var m = text.match(re);
+    if (!m) continue;
+    parsed.push({
+      time:  arows[i][1],
+      size:  m[3].toLowerCase(),
+      delta: (m[1] === '+' ? 1 : -1) * Number(m[2]),
+      reason:(m[1] === '+') ? 'restock' : 'sold',
+      note:  m[4] || ''
+    });
+  }
+  if (!parsed.length) return;
+
+  // Walk backward to assign before/after using current stock as the anchor.
+  var running = {};
+  var stock   = readStock(ss);
+  Object.keys(stock).forEach(function (k) { running[k] = Number(stock[k]) || 0; });
+  for (var j = parsed.length - 1; j >= 0; j--) {
+    var ev = parsed[j];
+    if (running[ev.size] === undefined) running[ev.size] = 0;
+    ev.after  = running[ev.size];
+    ev.before = ev.after - ev.delta;
+    running[ev.size] = ev.before;
+  }
+
+  // Append. createdAt = 0 marks the event as backfilled (no precise
+  // timestamp; sheet row order preserves chronology).
+  parsed.forEach(function (e) {
+    stockEv.appendRow([0, e.time, e.size, e.delta, e.reason, e.before, e.after, e.note, 'admin']);
+  });
+  report.push(
+    '• Backfilled ' + parsed.length + ' `stock_events` from activity log ' +
+    '(createdAt = 0 marks them as historical — they appear under "All time" but not in N-day filters)'
+  );
+}
+
+// 5. Move admin PIN out of Script Properties into the config sheet.
+// Code already auto-migrates on first verifyPIN call, but doing it here
+// makes the move explicit and visible in the report.
+function migratePinToConfigSheet_(ss, report) {
+  if (readConfig(ss, PIN_KEY)) return;  // already there
+  var legacy = PropertiesService.getScriptProperties().getProperty(PIN_KEY);
+  writeConfig(ss, PIN_KEY, legacy || sha256Hex('1234'));
+  report.push(
+    '• Wrote `adminPinHash` to config sheet (' +
+    (legacy ? 'migrated from Script Properties' : 'seeded with default PIN 1234') + ')'
+  );
+}

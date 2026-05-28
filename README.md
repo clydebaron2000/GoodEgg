@@ -46,7 +46,7 @@ The client polls the Apps Script web app every 30 seconds for fresh state, and w
 
 The short version (full walkthrough in [EggTrack_Deployment_Guide.md](EggTrack_Deployment_Guide.md)):
 
-1. Create a Google Sheet, open **Extensions → Apps Script**, paste in [Code.gs](Code.gs), and run `setupSpreadsheet` once.
+1. Create a Google Sheet, open **Extensions → Apps Script**, paste in [Code.gs](Code.gs), and run `setupSpreadsheet` once. (For an existing deployment, run `migrate` instead — it's idempotent and brings the schema/data up to date.)
 2. **Deploy → New deployment → Web app**, set "Execute as: Me" and "Who has access: Anyone". Copy the resulting `/exec` URL.
 3. Either:
    - Paste the URL into `eggtrack.html` (replace `YOUR_APPS_SCRIPT_URL_HERE` near line 536), and host the file anywhere, or
