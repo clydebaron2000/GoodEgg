@@ -504,7 +504,7 @@ function setupSpreadsheet() {
     writeConfig(ss, PIN_KEY, legacy || sha256Hex('1234'));
   }
 
-  SpreadsheetApp.getUi().alert('✅ EggTrack setup complete!\n\nDefault admin PIN is: 1234\nChange it in the app after first login.');
+  showResult_('✅ EggTrack setup complete!\n\nDefault admin PIN is: 1234\nChange it in the app after first login.');
 }
 
 function getOrCreate(ss, name) {
@@ -532,10 +532,22 @@ function migrate() {
   var body = report.length
     ? report.join('\n')
     : 'Already up to date — nothing to migrate.';
-  SpreadsheetApp.getUi().alert(
-    'EggTrack migration complete.\n\n' + body +
-    '\n\nThis function is idempotent — re-run it any time after a Code.gs update.'
-  );
+  var msg = 'EggTrack migration complete.\n\n' + body +
+            '\n\nThis function is idempotent — re-run it any time after a Code.gs update.';
+  showResult_(msg);
+}
+
+// Show a result either as a UI alert (when the sheet is open in a tab and
+// the script is running in that session) or as a Logger entry (when run
+// headlessly, e.g. via clasp or a trigger). Avoids the
+// "Cannot call SpreadsheetApp.getUi() from this context" error.
+function showResult_(msg) {
+  Logger.log(msg);
+  try {
+    SpreadsheetApp.getUi().alert(msg);
+  } catch (e) {
+    // No UI session; Logger output is the record. View → Executions.
+  }
 }
 
 // 1. Make sure every sheet exists with its current header.
