@@ -36,8 +36,9 @@ The client polls the Apps Script web app every 30 seconds for fresh state, and w
 - [eggtrack.html](eggtrack.html) — the whole app (UI + client logic)
 - [Code.gs](Code.gs) — Apps Script backend (paste into a Google Sheet's Apps Script editor)
 - [EggTrack_Deployment_Guide.md](EggTrack_Deployment_Guide.md) — step-by-step setup, no coding required
+- [Apps_Script_Sync_Setup.md](Apps_Script_Sync_Setup.md) — wiring up clasp + GitHub Actions so `Code.gs` auto-syncs to Apps Script on push
 - [EggTrack_Design.md](EggTrack_Design.md) — design notes (describes an alternate Firebase backend that was considered but not implemented; the shipped backend is Apps Script + Sheets)
-- [.github/workflows](.github/workflows) — auto-deploy to GitHub Pages
+- [.github/workflows](.github/workflows) — auto-deploy to GitHub Pages and Apps Script
 
 ---
 

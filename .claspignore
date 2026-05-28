@@ -1,0 +1,6 @@
+# Push only the backend files to Apps Script.
+# Without this, clasp would also push eggtrack.html (the frontend
+# PWA) and any other matching files, which is not what we want.
+**/**
+!Code.gs
+!appsscript.json
