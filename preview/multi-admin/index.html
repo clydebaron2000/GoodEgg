@@ -372,13 +372,13 @@
   <img src="logo.jpg" alt="The Good Egg" class="pin-logo-img">
   <div class="pin-sub">Tracking your farm fresh eggs</div>
 
-  <!-- Step 1: choose which admin -->
+  <!-- Step 1: pick username -->
   <div id="admin-selector" style="display:flex;flex-direction:column;align-items:center;width:100%;max-width:300px;">
     <div class="pin-sub" style="margin-bottom:10px;margin-top:8px;">Sign in as</div>
     <div id="admin-list" class="admin-list"></div>
   </div>
 
-  <!-- Step 2: enter that admin's PIN -->
+  <!-- Step 2: enter that username's numeric password -->
   <div id="pin-entry" style="display:none;flex-direction:column;align-items:center;">
     <div class="pin-as">Signing in as <strong id="pin-as-name"></strong></div>
     <div class="pin-dots" id="pin-dots">
@@ -505,17 +505,17 @@
     <div class="card" id="admin-people-card" style="display:none;">
       <div class="card-title"><i class="ti ti-users"></i>Admins</div>
       <p style="font-size:13px;color:var(--text-sec);margin-bottom:12px;">
-        Each admin has their own PIN. The activity log shows who did what. Onboard a new admin from the Apps Script editor with <code>addAdminInteractive</code>, or add one here.
+        Each admin signs in with a <strong>username</strong> (anything they want — pick something the team will recognize) and a <strong>numeric password</strong>. Activity entries show who did what. Onboard a new admin here or from the Apps Script editor with <code>addAdminInteractive</code>.
       </p>
       <div id="admin-people-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;"></div>
       <div class="row2">
         <div class="field">
-          <label>New admin name</label>
-          <input type="text" id="new-admin-name" placeholder="e.g. Sara" maxlength="48" />
+          <label>New admin username</label>
+          <input type="text" id="new-admin-name" placeholder="e.g. sara" maxlength="48" />
         </div>
         <div class="field">
-          <label>Their 4-digit PIN</label>
-          <input type="text" id="new-admin-pin" placeholder="e.g. 4729" inputmode="numeric" pattern="\d{4}" maxlength="4" />
+          <label>Numeric password (4–8 digits)</label>
+          <input type="text" id="new-admin-pin" placeholder="e.g. 4729" inputmode="numeric" pattern="\d{4,8}" maxlength="8" />
         </div>
       </div>
       <button class="btn btn-primary" id="btn-add-admin" onclick="addAdminFromUI()"><i class="ti ti-user-plus"></i>Add admin</button>
@@ -523,9 +523,9 @@
 
     <div class="card" id="admin-pin-card" style="display:none;">
       <div class="card-title"><i class="ti ti-lock"></i>Security</div>
-      <p style="font-size:13px;color:var(--text-sec);margin-bottom:12px;">Change your own 4-digit PIN. Only affects the admin currently signed in.</p>
+      <p style="font-size:13px;color:var(--text-sec);margin-bottom:12px;">Change your own numeric password. Only affects the admin currently signed in.</p>
       <button class="btn btn-outline" onclick="openModal('change-pin-modal');newPinBuffer='';updateNewPinDots();">
-        <i class="ti ti-lock-open"></i>Change my PIN
+        <i class="ti ti-lock-open"></i>Change my password
       </button>
     </div>
 
@@ -662,8 +662,8 @@
 <!-- CHANGE PIN MODAL -->
 <div class="modal-overlay" id="change-pin-modal">
   <div class="modal-box">
-    <div class="modal-title">Change admin PIN</div>
-    <p style="font-size:13px;color:var(--text-sec);margin-bottom:16px;">Enter a new 4-digit PIN using the keypad below.</p>
+    <div class="modal-title">Change my password</div>
+    <p style="font-size:13px;color:var(--text-sec);margin-bottom:16px;">Enter a new 4-digit numeric password using the keypad below.</p>
     <div class="pin-dots" id="newpin-dots" style="justify-content:flex-start;gap:10px;margin-bottom:16px;">
       <div class="pin-dot" id="ndot0"></div>
       <div class="pin-dot" id="ndot1"></div>
@@ -1052,7 +1052,7 @@ async function verifyPin(pin) {
       setMode('admin');
       showToast(`Welcome, ${res.admin.name}`);
     } else {
-      document.getElementById('pin-error').textContent = 'Incorrect PIN. Try again.';
+      document.getElementById('pin-error').textContent = 'Incorrect password. Try again.';
       pinBuffer = '';
       updatePinDots();
       setPinPadDisabled(false);
@@ -1495,10 +1495,10 @@ async function addAdminFromUI() {
   const pinEl  = document.getElementById('new-admin-pin');
   const name = nameEl.value.trim();
   const pin  = pinEl.value.trim();
-  if (!name) { showToast('Enter the admin\'s name', true); return; }
-  if (!/^\d{4}$/.test(pin)) { showToast('PIN must be 4 digits', true); return; }
+  if (!name) { showToast('Enter a username', true); return; }
+  if (!/^\d{4,8}$/.test(pin)) { showToast('Password must be 4–8 digits, numeric only', true); return; }
   if (state.admins.some(a => a.name.toLowerCase() === name.toLowerCase())) {
-    showToast(`An admin named "${name}" already exists`, true); return;
+    showToast(`The username "${name}" is taken`, true); return;
   }
 
   const btn = document.getElementById('btn-add-admin');
