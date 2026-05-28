@@ -446,7 +446,7 @@ function deleteOrder(data) {
 
 // Format a deleted-order activity log entry that preserves everything
 // useful for audit/recovery in a single readable line. Mirrors the
-// client-side formatter in eggtrack.html.
+// client-side formatter in index.html.
 function describeDeletedOrder_(o) {
   var unit  = Number(o.unitPrice) || 0;
   var trays = Number(o.trays) || 0;

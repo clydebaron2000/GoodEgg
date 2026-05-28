@@ -2,7 +2,7 @@
 
 A tiny mobile-first web app for a Philippine poultry farm to track egg inventory, prices, and customer orders.
 
-**Live app:** https://clydebaron2000.github.io/GoodEgg/eggtrack.html
+**Live app:** https://clydebaron2000.github.io/GoodEgg/
 
 Add it to your phone's home screen (Share → Add to Home Screen on iOS, ⋮ → Add to Home screen on Android) and it behaves like a native app.
 
@@ -21,7 +21,7 @@ Sizes tracked: small, medium, large, XL, jumbo. Quantities are in trays (default
 
 | Layer | What it is |
 |---|---|
-| Frontend | A single `eggtrack.html` file — vanilla JS, no build step, PWA-installable |
+| Frontend | A single `index.html` file — vanilla JS, no build step, PWA-installable |
 | Backend | Google Apps Script (`Code.gs`) acting as a JSON API over a Google Sheet |
 | Storage | A Google Sheet with four tabs: `stock`, `prices`, `orders`, `activity` |
 | Auth | 4-digit PIN, stored server-side as a SHA-256 hash in Script Properties |
@@ -33,7 +33,7 @@ The client polls the Apps Script web app every 30 seconds for fresh state, and w
 
 ## Files in this repo
 
-- [eggtrack.html](eggtrack.html) — the whole app (UI + client logic)
+- [index.html](index.html) — the whole app (UI + client logic)
 - [Code.gs](Code.gs) — Apps Script backend (paste into a Google Sheet's Apps Script editor)
 - [EggTrack_Deployment_Guide.md](EggTrack_Deployment_Guide.md) — step-by-step setup, no coding required
 - [Apps_Script_Sync_Setup.md](Apps_Script_Sync_Setup.md) — wiring up clasp + GitHub Actions so `Code.gs` auto-syncs to Apps Script on push
@@ -49,7 +49,7 @@ The short version (full walkthrough in [EggTrack_Deployment_Guide.md](EggTrack_D
 1. Create a Google Sheet, open **Extensions → Apps Script**, paste in [Code.gs](Code.gs), and run `setupSpreadsheet` once. (For an existing deployment, run `migrate` instead — it's idempotent and brings the schema/data up to date.)
 2. **Deploy → New deployment → Web app**, set "Execute as: Me" and "Who has access: Anyone". Copy the resulting `/exec` URL.
 3. Either:
-   - Paste the URL into `eggtrack.html` (replace `YOUR_APPS_SCRIPT_URL_HERE` near line 536), and host the file anywhere, or
+   - Paste the URL into `index.html` (replace `YOUR_APPS_SCRIPT_URL_HERE` near line 536), and host the file anywhere, or
    - Fork this repo, add the URL as a GitHub Actions secret named `SCRIPT_URL`, and push to `main` — the workflow injects it on deploy.
 4. Open the app, tap **Admin**, log in with the default PIN `1234`, and immediately change it from the Inventory tab.
 

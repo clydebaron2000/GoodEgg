@@ -1,29 +1,35 @@
-name: Deploy EggTrack to GitHub Pages
+name: Deploy The Good Egg to GitHub Pages
+
+# Deploys every branch:
+#   main → root             → https://clydebaron2000.github.io/GoodEgg/
+#   any other → preview/<branch>/ → https://clydebaron2000.github.io/GoodEgg/preview/<branch>/
+#
+# Under the hood: builds a staged `dist/` (just index.html with the
+# SCRIPT_URL secret injected) and pushes it to the `gh-pages` branch,
+# either at the root or in a per-branch subfolder. keep_files: true
+# means a main deploy doesn't wipe other branches' previews, and vice
+# versa.
+#
+# IMPORTANT — one-time repo setting change required (when migrating
+# from actions/deploy-pages):
+#   Settings → Pages → Source → "Deploy from a branch"
+#   Branch: gh-pages, Folder: / (root)
 
 on:
   push:
-    branches:
-      - main
+    branches: ['**']
   workflow_dispatch:
 
-# Allow this workflow to deploy to GitHub Pages
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Inject Apps Script URL from secret
+      - name: Verify SCRIPT_URL secret
         env:
           SCRIPT_URL: ${{ secrets.SCRIPT_URL }}
         run: |
@@ -31,15 +37,50 @@ jobs:
             echo "::error::SCRIPT_URL secret is empty or missing. Add it under Settings → Secrets and variables → Actions."
             exit 1
           fi
-          # Only replace the first occurrence (the const assignment), so the
-          # placeholder check later in the file stays intact.
-          sed -i "0,/YOUR_APPS_SCRIPT_URL_HERE/ s|YOUR_APPS_SCRIPT_URL_HERE|$SCRIPT_URL|" eggtrack.html
 
-      - name: Upload to GitHub Pages
-        uses: actions/upload-pages-artifact@v3
+      - name: Stage site into dist/
+        run: |
+          mkdir -p dist
+          cp index.html dist/
+
+      - name: Inject Apps Script URL from secret
+        env:
+          SCRIPT_URL: ${{ secrets.SCRIPT_URL }}
+        run: |
+          sed -i "0,/YOUR_APPS_SCRIPT_URL_HERE/ s|YOUR_APPS_SCRIPT_URL_HERE|$SCRIPT_URL|" dist/index.html
+
+      - name: Determine destination directory
+        id: dest
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          if [ "$BRANCH" = "main" ]; then
+            echo "dir=" >> "$GITHUB_OUTPUT"
+            echo "url=https://clydebaron2000.github.io/GoodEgg/" >> "$GITHUB_OUTPUT"
+            echo "label=production (root)" >> "$GITHUB_OUTPUT"
+          else
+            # Sanitize branch name for URL/path safety
+            SAFE=$(echo "$BRANCH" | tr '/' '-' | tr -cd 'a-zA-Z0-9._-')
+            echo "dir=preview/$SAFE" >> "$GITHUB_OUTPUT"
+            echo "url=https://clydebaron2000.github.io/GoodEgg/preview/$SAFE/" >> "$GITHUB_OUTPUT"
+            echo "label=preview/$SAFE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: .
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          destination_dir: ${{ steps.dest.outputs.dir }}
+          keep_files: true        # don't wipe other branches' previews
+          publish_branch: gh-pages
+          commit_message: "Deploy ${{ steps.dest.outputs.label }} from ${{ github.sha }}"
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Summary
+        run: |
+          {
+            echo "### 🚀 Deployed ${{ steps.dest.outputs.label }}"
+            echo ""
+            echo "**URL:** ${{ steps.dest.outputs.url }}"
+            echo ""
+            echo "May take ~30 s to propagate after first publish."
+          } >> "$GITHUB_STEP_SUMMARY"

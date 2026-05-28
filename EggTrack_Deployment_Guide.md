@@ -6,7 +6,7 @@ Estimated time: **30–40 minutes**. No coding required — just copy-paste step
 
 ## What you'll need
 - A Google account (Gmail)
-- The two files from this folder: `Code.gs` and `eggtrack.html`
+- The two files from this folder: `Code.gs` and `index.html`
 - A place to host the HTML (covered in Part 3)
 
 ---
@@ -72,7 +72,7 @@ https://script.google.com/macros/s/AKfycb.../exec
 
 ## Part 4 — Connect the HTML app to your spreadsheet
 
-**Step 18.** Open the `eggtrack.html` file in a text editor (Notepad on Windows, TextEdit on Mac — make sure TextEdit is in plain text mode: Format → Make Plain Text).
+**Step 18.** Open the `index.html` file in a text editor (Notepad on Windows, TextEdit on Mac — make sure TextEdit is in plain text mode: Format → Make Plain Text).
 
 **Step 19.** Find this line near the top of the `<script>` section (around line 280):
 ```
@@ -86,13 +86,13 @@ const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycb.../exec';
 
 **Step 21.** Save the file (Ctrl+S / Cmd+S).
 
-**Step 22.** Test it locally first — open `eggtrack.html` directly in Chrome or Safari by double-clicking it. The app should load, show your stock (all zeros), and the sync bar should disappear after a few seconds. If you see "Could not reach server", double-check the URL in Step 20.
+**Step 22.** Test it locally first — open `index.html` directly in Chrome or Safari by double-clicking it. The app should load, show your stock (all zeros), and the sync bar should disappear after a few seconds. If you see "Could not reach server", double-check the URL in Step 20.
 
 ---
 
 ## Part 5 — Host the app online
 
-You need to put `eggtrack.html` somewhere online so others can open it on their phones. Two free options:
+You need to put `index.html` somewhere online so others can open it on their phones. Two free options:
 
 ---
 
@@ -106,7 +106,7 @@ You need to put `eggtrack.html` somewhere online so others can open it on their 
 
 **Step 26.** On the next screen, click **uploading an existing file**.
 
-**Step 27.** Drag your `eggtrack.html` file into the upload area. In the "Commit changes" section at the bottom, click **Commit changes**.
+**Step 27.** Drag your `index.html` file into the upload area. In the "Commit changes" section at the bottom, click **Commit changes**.
 
 **Step 28.** Go to **Settings → Pages** (left sidebar).
 
@@ -114,7 +114,7 @@ You need to put `eggtrack.html` somewhere online so others can open it on their 
 
 **Step 30.** Wait about 2 minutes, then refresh. You'll see a green banner with your URL:
 ```
-https://your-username.github.io/eggtrack/eggtrack.html
+https://your-username.github.io/eggtrack/index.html
 ```
 That's your live app URL. Share it with staff and customers.
 
@@ -132,7 +132,7 @@ firebase init hosting
 ```
 Follow the prompts — choose your existing Firebase project, set the public directory to `.`, answer **No** to "Configure as a single-page app".
 
-**Step 25b.** Rename `eggtrack.html` to `index.html`, then run:
+**Step 25b.** From the directory containing `index.html`, run:
 ```
 firebase deploy
 ```
@@ -174,7 +174,7 @@ The app icon will appear on the home screen. It opens full-screen, like a native
 
 ## Part 8 — Updating the app in the future
 
-If you make changes to `eggtrack.html` and want to push them live:
+If you make changes to `index.html` and want to push them live:
 - **GitHub Pages:** upload the new file to your repo (same steps as Part 5A). Changes go live within 2 minutes.
 - **Firebase Hosting:** run `firebase deploy` again from your terminal.
 

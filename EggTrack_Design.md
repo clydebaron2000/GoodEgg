@@ -311,7 +311,7 @@ These are estimates for a stable 4G connection in the Philippines to Firebase Si
 - URL: `https://your-farm.web.app` or a custom domain like `eggs.yourfarm.com`
 
 **Option B — GitHub Pages**
-- Upload `eggtrack.html` as `index.html` to a public repo
+- Upload `index.html` to a public repo
 - Free, no server needed
 - Firebase SDK is loaded from CDN; Firestore calls work from any origin
 
@@ -322,7 +322,7 @@ These are estimates for a stable 4G connection in the Philippines to Firebase Si
 1. Create a Firebase project at console.firebase.google.com
 2. Enable Firestore, select `asia-southeast1` (Singapore) region
 3. Paste Security Rules
-4. Copy Firebase config (apiKey, projectId, etc.) into `eggtrack.html`
+4. Copy Firebase config (apiKey, projectId, etc.) into `index.html`
 5. Run the one-time seed script to create `/config`, `/stock`, `/prices` documents with defaults
 6. Deploy HTML file (Firebase Hosting or GitHub Pages)
 7. Open on phone, install as PWA (Add to Home Screen)

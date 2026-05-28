@@ -82,7 +82,7 @@ On a successful run you should see two steps complete:
 - `Push Code.gs to Apps Script` — uploads the local file
 - `Update existing deployment` — bumps the deployment to a new version
 
-Open the live app and check the `?action=getState` endpoint, or just admin-login on https://clydebaron2000.github.io/GoodEgg/eggtrack.html — your changes should be live.
+Open the live app and check the `?action=getState` endpoint, or just admin-login on https://clydebaron2000.github.io/GoodEgg/ — your changes should be live.
 
 ---
 
@@ -93,7 +93,7 @@ The repo has a `.claspignore` that limits clasp to two files:
 - `Code.gs` — the backend
 - `appsscript.json` — the manifest
 
-This is important — without it, clasp would also try to push `eggtrack.html` and any other matching files into your Apps Script project, which is not what we want (the HTML is the static PWA served by GitHub Pages, not an Apps Script HTML template).
+This is important — without it, clasp would also try to push `index.html` and any other matching files into your Apps Script project, which is not what we want (the HTML is the static PWA served by GitHub Pages, not an Apps Script HTML template).
 
 ---
 
@@ -104,5 +104,5 @@ This is important — without it, clasp would also try to push `eggtrack.html` a
 | Workflow fails with `Missing required secret(s):` | One of the three secrets isn't set on the repo. Check the spelling — they're case-sensitive. |
 | Workflow fails at `clasp push` with auth errors | OAuth token in `CLASPRC_JSON` was invalidated (long inactivity, password change, etc.). Re-run `clasp login` locally and update the `CLASPRC_JSON` secret. |
 | Push succeeds but the live app behaves like the old code | The deployment wasn't updated. Check `DEPLOYMENT_ID` matches the deployment whose `/exec` URL you're using. Run **Deploy → Manage deployments** in Apps Script to compare. |
-| `eggtrack.html` shows up in your Apps Script project | `.claspignore` is missing or wrong. Restore it to: `**/**` then `!Code.gs` then `!appsscript.json`. |
+| `index.html` shows up in your Apps Script project | `.claspignore` is missing or wrong. Restore it to: `**/**` then `!Code.gs` then `!appsscript.json`. |
 | Workflow fails: `appsscript.json is missing` | Make sure `appsscript.json` is committed at the repo root (not just inside `tmp/`). |
