@@ -9,7 +9,8 @@ var SHEET_STOCK    = 'stock';
 var SHEET_PRICES   = 'prices';
 var SHEET_ORDERS   = 'orders';
 var SHEET_ACTIVITY = 'activity';
-var PIN_PROP_KEY   = 'adminPinHash';
+var SHEET_CONFIG   = 'config';
+var PIN_KEY        = 'adminPinHash';
 
 var SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large', xl: 'XL', jumbo: 'Jumbo' };
 
@@ -73,12 +74,14 @@ function getState() {
 
 function verifyPIN(submittedHash) {
   if (!submittedHash) return false;
-  var props  = PropertiesService.getScriptProperties();
-  var stored = props.getProperty(PIN_PROP_KEY);
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var stored = readConfig(ss, PIN_KEY);
   if (!stored) {
-    // First run: set default PIN 1234
-    stored = sha256Hex('1234');
-    props.setProperty(PIN_PROP_KEY, stored);
+    // First run / migration: pull from legacy Script Properties if present,
+    // otherwise default to PIN 1234. Persist the result to the config sheet.
+    var legacy = PropertiesService.getScriptProperties().getProperty(PIN_KEY);
+    stored = legacy || sha256Hex('1234');
+    writeConfig(ss, PIN_KEY, stored);
   }
   return submittedHash === stored;
 }
@@ -89,9 +92,45 @@ function doVerifyPIN(data) {
 
 function changePIN(data) {
   if (!data.newPinHash) return { error: 'No new PIN hash provided' };
-  PropertiesService.getScriptProperties().setProperty(PIN_PROP_KEY, data.newPinHash);
-  logActivity(SpreadsheetApp.getActiveSpreadsheet(), 'Admin PIN changed');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  writeConfig(ss, PIN_KEY, data.newPinHash);
+  logActivity(ss, 'Admin PIN changed');
   return { success: true };
+}
+
+// ── CONFIG (key/value sheet) ───────────────────────────────────
+
+function readConfig(ss, key) {
+  var sheet = ss.getSheetByName(SHEET_CONFIG);
+  if (!sheet) return null;
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (rows[i][0] === key) return rows[i][1];
+  }
+  return null;
+}
+
+function writeConfig(ss, key, value) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var sheet = ss.getSheetByName(SHEET_CONFIG);
+    if (!sheet) {
+      sheet = ss.insertSheet(SHEET_CONFIG);
+      sheet.appendRow(['key', 'value']);
+      sheet.getRange('A1:B1').setFontWeight('bold');
+    }
+    var rows = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0] === key) {
+        sheet.getRange(i + 1, 2).setValue(value);
+        return;
+      }
+    }
+    sheet.appendRow([key, value]);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ── STOCK ──────────────────────────────────────────────────────
@@ -341,10 +380,17 @@ function setupSpreadsheet() {
     activity.getRange('A1:B1').setFontWeight('bold');
   }
 
-  // Default PIN: 1234
-  var props = PropertiesService.getScriptProperties();
-  if (!props.getProperty(PIN_PROP_KEY)) {
-    props.setProperty(PIN_PROP_KEY, sha256Hex('1234'));
+  // Config (admin PIN hash + future key/value settings)
+  var config = getOrCreate(ss, SHEET_CONFIG);
+  if (config.getLastRow() === 0) {
+    config.appendRow(['key', 'value']);
+    config.getRange('A1:B1').setFontWeight('bold');
+  }
+  if (!readConfig(ss, PIN_KEY)) {
+    // Migrate from legacy Script Properties if a PIN was stored there;
+    // otherwise seed the default PIN 1234.
+    var legacy = PropertiesService.getScriptProperties().getProperty(PIN_KEY);
+    writeConfig(ss, PIN_KEY, legacy || sha256Hex('1234'));
   }
 
   SpreadsheetApp.getUi().alert('✅ EggTrack setup complete!\n\nDefault admin PIN is: 1234\nChange it in the app after first login.');
