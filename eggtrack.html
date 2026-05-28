@@ -169,6 +169,54 @@
   .btn-full { width: 100%; justify-content: center; }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
 
+  /* ── FILTER CHIPS ── */
+  .filter-chip {
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text-sec);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .filter-chip:hover { background: var(--gray-bg); }
+  .filter-chip.active {
+    background: var(--green-700);
+    color: #fff;
+    border-color: var(--green-700);
+  }
+
+  /* ── STATUS SEGMENTED CONTROL (order cards) ── */
+  .status-segment {
+    display: flex;
+    gap: 2px;
+    background: var(--gray-bg);
+    padding: 3px;
+    border-radius: 8px;
+    flex: 1;
+  }
+  .status-segment button {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-sec);
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .status-segment button:hover:not(.current) { color: var(--green-700); }
+  .status-segment button.current {
+    background: #fff;
+    color: var(--green-700);
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    cursor: default;
+  }
+
   /* ── PRICE TABLE ── */
   .price-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
   .price-row:last-child { border-bottom: none; }
@@ -413,6 +461,37 @@
 
   <!-- ─── ORDERS PAGE ─── -->
   <div class="page" id="page-orders">
+    <div class="card" id="order-filters-card">
+      <div class="card-title"><i class="ti ti-filter"></i>Filter orders</div>
+      <input type="search" id="order-search" placeholder="Search name, contact, address, notes…"
+             oninput="setOrderSearch(this.value)"
+             style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:10px;" />
+      <div class="filter-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+        <button type="button" class="filter-chip" data-status="pending"   onclick="toggleStatusFilter('pending')">Pending</button>
+        <button type="button" class="filter-chip" data-status="confirmed" onclick="toggleStatusFilter('confirmed')">Confirmed</button>
+        <button type="button" class="filter-chip" data-status="done"      onclick="toggleStatusFilter('done')">Done</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select id="order-time" onchange="setOrderTimeRange(this.value)"
+                style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff;">
+          <option value="all">All time</option>
+          <option value="today">Today</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+        </select>
+        <select id="order-limit" onchange="setOrderLimit(this.value)"
+                style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff;">
+          <option value="25">Show 25</option>
+          <option value="50" selected>Show 50</option>
+          <option value="100">Show 100</option>
+          <option value="all">Show all</option>
+        </select>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="resetOrderFilters()" style="margin-left:auto;">
+          <i class="ti ti-refresh"></i>Reset
+        </button>
+      </div>
+      <div id="order-count-label" style="font-size:12px;color:var(--text-sec);margin-top:10px;"></div>
+    </div>
     <div id="orders-container"></div>
   </div>
 
@@ -553,6 +632,13 @@ let pinBuffer       = '';
 let adminPinHash    = null;  // Stored in memory after successful login
 let pendingOrderId  = null;  // UUID generated per order form, for dedup
 let pollTimer       = null;
+let inFlightActions = 0;     // > 0 → polling pauses so it doesn't clobber optimistic updates
+let orderFilters = {
+  search:   '',
+  statuses: { pending: true, confirmed: true, done: false },
+  timeRange:'all',           // 'today' | '7d' | '30d' | 'all'
+  limit:    50               // 25 | 50 | 100 | Infinity
+};
 
 // ═══════════════════════════════════════════════
 // CRYPTO HELPERS
@@ -644,6 +730,10 @@ function pushActivity(text) {
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
+    // Skip ticks while an admin/customer action is mid-flight. Otherwise
+    // the poll's response would overwrite the user's optimistic change
+    // for the brief window before the action's own response lands.
+    if (inFlightActions > 0) return;
     try {
       const data = await fetchState();
       applyState(data);
@@ -653,6 +743,11 @@ function startPolling() {
     }
   }, POLL_INTERVAL);
 }
+
+// Bump the counter around any action that mutates server state. While > 0,
+// the polling loop skips ticks so it can't overwrite an optimistic change.
+function actionStart() { inFlightActions++; }
+function actionEnd()   { inFlightActions = Math.max(0, inFlightActions - 1); }
 
 function setSyncStatus(status) {
   const bar  = document.getElementById('sync-bar');
@@ -840,26 +935,92 @@ function renderPricing() {
     `<div class="metric-card" style="background:var(--green-700);grid-column:span 2"><div class="metric-val" style="color:#fff;font-size:26px;">₱${total.toLocaleString()}</div><div class="metric-label" style="color:rgba(255,255,255,.75);">Total inventory value</div></div>`;
 }
 
+// ── Filtering ──────────────────────────────────────────────────
+function getFilteredOrders() {
+  const all      = state.orders || [];
+  const search   = orderFilters.search.trim().toLowerCase();
+  const statuses = orderFilters.statuses;
+
+  let cutoff = 0;
+  const nowMs = Date.now();
+  const DAY   = 24 * 60 * 60 * 1000;
+  if      (orderFilters.timeRange === 'today') cutoff = nowMs - DAY;
+  else if (orderFilters.timeRange === '7d')    cutoff = nowMs - 7  * DAY;
+  else if (orderFilters.timeRange === '30d')   cutoff = nowMs - 30 * DAY;
+
+  return all.filter(o => {
+    if (!statuses[o.status]) return false;
+    if (cutoff) {
+      // Orders without createdAt (pre-migration) pass the time filter so we
+      // don't accidentally hide existing data.
+      if (o.createdAt && Number(o.createdAt) < cutoff) return false;
+    }
+    if (search) {
+      const hay = (o.name + ' ' + o.contact + ' ' + o.address + ' ' + (o.notes || '')).toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
+function syncFilterUI() {
+  // Chip active states
+  document.querySelectorAll('.filter-chip[data-status]').forEach(el => {
+    const s = el.getAttribute('data-status');
+    el.classList.toggle('active', !!orderFilters.statuses[s]);
+  });
+  // Selects
+  const timeEl = document.getElementById('order-time');
+  if (timeEl)  timeEl.value  = orderFilters.timeRange;
+  const limEl  = document.getElementById('order-limit');
+  if (limEl)   limEl.value   = orderFilters.limit === Infinity ? 'all' : String(orderFilters.limit);
+  const sEl    = document.getElementById('order-search');
+  if (sEl && sEl.value !== orderFilters.search) sEl.value = orderFilters.search;
+}
+
 function renderOrders() {
-  const orders    = state.orders || [];
   const container = document.getElementById('orders-container');
-  if (orders.length === 0) {
+  const total     = (state.orders || []).length;
+  syncFilterUI();
+
+  if (total === 0) {
+    document.getElementById('order-count-label').textContent = '';
     container.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i><p>No orders yet.</p></div>`;
     return;
   }
-  const pending   = orders.filter(o => o.status === 'pending').reverse();
-  const confirmed = orders.filter(o => o.status === 'confirmed').reverse();
-  const done      = orders.filter(o => o.status === 'done').reverse();
+
+  // Filter, sort newest-first, then cap by limit.
+  const filtered = getFilteredOrders().sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  const capped   = filtered.slice(0, orderFilters.limit === Infinity ? filtered.length : orderFilters.limit);
+
+  document.getElementById('order-count-label').textContent =
+    `Showing ${capped.length} of ${filtered.length} matching · ${total} total`;
+
+  if (capped.length === 0) {
+    container.innerHTML = `<div class="empty-state"><i class="ti ti-mood-empty"></i><p>No orders match your filters.</p></div>`;
+    return;
+  }
+
+  // Group by status (only the statuses currently enabled in the filter).
+  const groups = [
+    { key: 'pending',   label: 'Pending' },
+    { key: 'confirmed', label: 'Confirmed' },
+    { key: 'done',      label: 'Completed' }
+  ];
   let html = '';
-  if (pending.length)   html += `<div class="section-label">Pending (${pending.length})</div>`   + pending.map(orderCard).join('');
-  if (confirmed.length) html += `<div class="section-label">Confirmed (${confirmed.length})</div>` + confirmed.map(orderCard).join('');
-  if (done.length)      html += `<div class="section-label">Completed (${done.length})</div>`    + done.map(orderCard).join('');
+  groups.forEach(g => {
+    if (!orderFilters.statuses[g.key]) return;
+    const rows = capped.filter(o => o.status === g.key);
+    if (!rows.length) return;
+    html += `<div class="section-label">${g.label} (${rows.length})</div>` + rows.map(orderCard).join('');
+  });
   container.innerHTML = html;
 }
 
 function orderCard(o) {
   const value       = (state.prices[o.size] || 0) * o.trays;
-  const statusClass = o.status === 'pending' ? 'badge-low' : 'badge-good';
+  const statusClass = o.status === 'pending' ? 'badge-low' : o.status === 'confirmed' ? 'badge-good' : 'badge-good';
+  const statuses    = ['pending','confirmed','done'];
   return `
     <div class="order-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -876,12 +1037,29 @@ function orderCard(o) {
       ${o.notes ? `<div class="order-meta"><i class="ti ti-note" style="font-size:12px;"></i> ${o.notes}</div>` : ''}
       <div class="order-meta">${o.time}</div>
       ${isAdmin ? `
-      <div class="order-actions">
-        ${o.status === 'pending'   ? `<button class="btn btn-primary btn-sm" onclick="updateOrderStatus('${o.id}','confirmed')"><i class="ti ti-check"></i>Confirm</button>` : ''}
-        ${o.status === 'confirmed' ? `<button class="btn btn-primary btn-sm" onclick="updateOrderStatus('${o.id}','done')"><i class="ti ti-package"></i>Mark done</button>` : ''}
-        <button class="btn btn-danger btn-sm" onclick="deleteOrder('${o.id}')"><i class="ti ti-trash"></i>Delete</button>
+      <div class="order-actions" style="gap:8px;align-items:stretch;">
+        <div class="status-segment" role="group" aria-label="Order status">
+          ${statuses.map(s => `
+            <button type="button" class="${s === o.status ? 'current' : ''}"
+                    ${s === o.status ? '' : `onclick="updateOrderStatus('${o.id}','${s}')"`}>
+              ${s.charAt(0).toUpperCase() + s.slice(1)}
+            </button>`).join('')}
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="deleteOrder('${o.id}')" title="Permanently delete this order"><i class="ti ti-trash"></i></button>
       </div>` : ''}
     </div>`;
+}
+
+// ── Filter handlers ─────────────────────────────────────────────
+function setOrderSearch(v)     { orderFilters.search = v;                    renderOrders(); }
+function toggleStatusFilter(s) { orderFilters.statuses[s] = !orderFilters.statuses[s]; renderOrders(); }
+function setOrderTimeRange(v)  { orderFilters.timeRange = v;                 renderOrders(); }
+function setOrderLimit(v)      { orderFilters.limit = v === 'all' ? Infinity : Number(v); renderOrders(); }
+function resetOrderFilters() {
+  orderFilters = {
+    search: '', statuses: { pending: true, confirmed: true, done: false }, timeRange: 'all', limit: 50
+  };
+  renderOrders();
 }
 
 // ═══════════════════════════════════════════════
@@ -904,6 +1082,7 @@ async function addStock() {
 
   const btn = document.getElementById('btn-add-stock');
   setLoading(btn, true, 'Adding…');
+  actionStart();
   setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'addStock', size, trays, note, pinHash: adminPinHash });
@@ -916,6 +1095,7 @@ async function addStock() {
     setSyncStatus('error');
     showToast('Failed to save. Check connection.', true);
   } finally {
+    actionEnd();
     setLoading(btn, false, '<i class="ti ti-plus"></i>Add trays');
   }
 }
@@ -941,6 +1121,7 @@ async function deductStock() {
 
   const btn = document.getElementById('btn-confirm-deduct');
   setLoading(btn, true, 'Saving…');
+  actionStart();
   setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'deductStock', size, trays, pinHash: adminPinHash });
@@ -954,6 +1135,7 @@ async function deductStock() {
     setSyncStatus('error');
     showToast('Failed to save. Check connection.', true);
   } finally {
+    actionEnd();
     setLoading(btn, false, '<i class="ti ti-check"></i>Confirm');
   }
 }
@@ -977,6 +1159,7 @@ async function savePrices() {
 
   const btn = document.getElementById('btn-save-prices');
   setLoading(btn, true, 'Saving…');
+  actionStart();
   setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'savePrices', prices, pinHash: adminPinHash });
@@ -989,6 +1172,7 @@ async function savePrices() {
     setSyncStatus('error');
     showToast('Failed to save. Check connection.', true);
   } finally {
+    actionEnd();
     setLoading(btn, false, '<i class="ti ti-device-floppy"></i>Save prices');
   }
 }
@@ -1015,7 +1199,7 @@ async function submitOrder() {
 
   const order = {
     id: pendingOrderId, name, contact, address, size, trays, notes,
-    status: 'pending', time: now()
+    status: 'pending', time: now(), createdAt: Date.now()
   };
 
   // Optimistic: add the order to the list so the customer sees it immediately.
@@ -1028,6 +1212,7 @@ async function submitOrder() {
 
   const btn = document.getElementById('btn-submit-order');
   setLoading(btn, true, 'Submitting…');
+  actionStart();
   setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'submitOrder', order });
@@ -1047,6 +1232,7 @@ async function submitOrder() {
     showToast('Could not submit. Please try again.', true);
     // pendingOrderId is preserved — retry will be idempotent
   } finally {
+    actionEnd();
     setLoading(btn, false, '<i class="ti ti-send"></i>Submit order');
   }
 }
@@ -1054,6 +1240,7 @@ async function submitOrder() {
 async function updateOrderStatus(id, status) {
   const idx = state.orders.findIndex(o => o.id === id);
   if (idx === -1) return;
+  if (state.orders[idx].status === status) return; // already in that status
 
   // Optimistic
   const snap  = snapshot();
@@ -1062,6 +1249,7 @@ async function updateOrderStatus(id, status) {
   pushActivity(`Order ${status}: ${orderName}`);
   renderAll();
 
+  actionStart();
   setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'updateOrderStatus', orderId: id, status, pinHash: adminPinHash });
@@ -1073,17 +1261,25 @@ async function updateOrderStatus(id, status) {
     restoreSnapshot(snap);
     setSyncStatus('error');
     showToast('Failed. Check connection.', true);
+  } finally {
+    actionEnd();
   }
 }
 
 async function deleteOrder(id) {
-  if (!confirm('Delete this order?')) return;
+  const o = state.orders.find(x => x.id === id);
+  const label = o
+    ? `${o.name} — ${o.trays} tray${o.trays>1?'s':''} ${SIZE_LABELS[o.size]}`
+    : 'this order';
+  const msg = `⚠️ Permanently delete:\n\n${label}\n\nThis erases the row from the Google Sheet. It cannot be undone.`;
+  if (!confirm(msg)) return;
 
   // Optimistic
   const snap = snapshot();
-  state.orders = state.orders.filter(o => o.id !== id);
+  state.orders = state.orders.filter(x => x.id !== id);
   renderAll();
 
+  actionStart();
   setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'deleteOrder', orderId: id, pinHash: adminPinHash });
@@ -1095,6 +1291,8 @@ async function deleteOrder(id) {
     restoreSnapshot(snap);
     setSyncStatus('error');
     showToast('Failed. Check connection.', true);
+  } finally {
+    actionEnd();
   }
 }
 

@@ -218,15 +218,16 @@ function readOrders(ss) {
   var orders = [];
   for (var i = 1; i < rows.length; i++) {
     orders.push({
-      id:      rows[i][0],
-      name:    rows[i][1],
-      contact: rows[i][2],
-      address: rows[i][3],
-      size:    rows[i][4],
-      trays:   rows[i][5],
-      notes:   rows[i][6],
-      status:  rows[i][7],
-      time:    rows[i][8]
+      id:        rows[i][0],
+      name:      rows[i][1],
+      contact:   rows[i][2],
+      address:   rows[i][3],
+      size:      rows[i][4],
+      trays:     rows[i][5],
+      notes:     rows[i][6],
+      status:    rows[i][7],
+      time:      rows[i][8],
+      createdAt: rows[i][9] || null  // epoch ms; null for pre-migration rows
     });
   }
   return orders;
@@ -250,7 +251,8 @@ function submitOrder(data) {
     var o = data.order;
     sheet.appendRow([
       o.id, o.name, o.contact, o.address,
-      o.size, o.trays, o.notes || '', 'pending', o.time
+      o.size, o.trays, o.notes || '', 'pending', o.time,
+      o.createdAt || Date.now()
     ]);
     logActivity(ss, 'Order: ' + o.name + ' — ' + o.trays + ' tray' + plural(o.trays) + ' ' + sizeLabel(o.size));
     return { success: true, state: getState() };
@@ -369,8 +371,8 @@ function setupSpreadsheet() {
   // Orders
   var orders = getOrCreate(ss, SHEET_ORDERS);
   if (orders.getLastRow() === 0) {
-    orders.appendRow(['id','name','contact','address','size','trays','notes','status','time']);
-    orders.getRange('A1:I1').setFontWeight('bold');
+    orders.appendRow(['id','name','contact','address','size','trays','notes','status','time','createdAt']);
+    orders.getRange('A1:J1').setFontWeight('bold');
   }
 
   // Activity
