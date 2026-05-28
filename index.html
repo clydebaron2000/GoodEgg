@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-title" content="The Good Egg">
 <meta name="theme-color" content="#6B4226">
 <title>The Good Egg – Farm Fresh Eggs</title>
+<link rel="icon" type="image/jpeg" href="logo.jpg">
+<link rel="apple-touch-icon" href="logo.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/tabler-icons.min.css">
@@ -77,11 +79,13 @@
   }
   .top-nav .brand { display: flex; align-items: center; gap: 10px; flex: 1; }
   .top-nav .logo-icon {
-    width: 36px; height: 36px; border-radius: 10px;
-    background: rgba(255,255,255,0.18);
+    width: 40px; height: 40px; border-radius: 10px;
+    background: #FFFCF5;
     display: flex; align-items: center; justify-content: center;
-    font-size: 20px; color: #fff;
+    overflow: hidden;
+    flex-shrink: 0;
   }
+  .top-nav .logo-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
   .top-nav .brand-text .app-name { font-family: 'DM Serif Display', serif; font-size: 20px; color: #fff; line-height: 1; }
   .top-nav .brand-text .app-sub  { font-size: 11px; color: rgba(255,255,255,0.65); margin-top: 1px; }
   .top-nav .mode-btns { display: flex; gap: 6px; }
@@ -310,7 +314,8 @@
     align-items: center; justify-content: center; padding: 40px 24px;
     background: var(--gray-bg);
   }
-  .pin-logo { font-family: 'DM Serif Display', serif; font-size: 36px; color: var(--brown-700); margin-bottom: 6px; }
+  .pin-logo-img { width: 160px; height: 160px; object-fit: contain; margin-bottom: 8px; }
+  .pin-logo { font-family: 'DM Serif Display', serif; font-size: 28px; color: var(--brown-700); margin-bottom: 4px; }
   .pin-sub  { font-size: 14px; color: var(--text-sec); margin-bottom: 30px; }
   .pin-dots { display: flex; gap: 12px; justify-content: center; margin: 20px 0; }
   .pin-dot  { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--brown-600); background: transparent; transition: background .15s; }
@@ -341,7 +346,7 @@
 
 <!-- PIN SCREEN -->
 <div id="pin-screen" class="pin-screen" style="display:none;">
-  <div class="pin-logo">🥚 The Good Egg</div>
+  <img src="logo.jpg" alt="The Good Egg" class="pin-logo-img">
   <div class="pin-sub">Enter admin PIN to manage inventory</div>
   <div class="pin-dots" id="pin-dots">
     <div class="pin-dot" id="dot0"></div>
@@ -371,7 +376,7 @@
 <div id="app" style="display:none;">
   <nav class="top-nav">
     <div class="brand">
-      <div class="logo-icon"><i class="ti ti-egg" aria-hidden="true"></i></div>
+      <div class="logo-icon"><img src="logo.jpg" alt="The Good Egg logo"></div>
       <div class="brand-text">
         <div class="app-name">The Good Egg</div>
         <div class="app-sub">Farm Fresh Eggs</div>
@@ -1650,6 +1655,11 @@ if (SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
 <!-- PWA MANIFEST -->
 <script>
 (function() {
+  // The manifest is served as a blob URL, so relative icon src would
+  // resolve against `blob:` instead of the document. Absolutize against
+  // the page's URL so each deploy (root + /preview/<branch>/) picks up
+  // the logo from the right place.
+  const logoUrl = new URL('logo.jpg', document.baseURI).href;
   const manifest = {
     name: "The Good Egg – Farm Fresh Eggs",
     short_name: "The Good Egg",
@@ -1659,8 +1669,8 @@ if (SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
     background_color: "#FBF6E9",
     theme_color: "#6B4226",
     icons: [
-      { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>", sizes: "192x192", type: "image/svg+xml" },
-      { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>", sizes: "512x512", type: "image/svg+xml" }
+      { src: logoUrl, sizes: "192x192", type: "image/jpeg" },
+      { src: logoUrl, sizes: "512x512", type: "image/jpeg" }
     ]
   };
   const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
