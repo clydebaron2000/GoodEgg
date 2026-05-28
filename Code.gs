@@ -321,7 +321,23 @@ function deleteOrder(data) {
     var rows  = sheet.getDataRange().getValues();
     for (var i = 1; i < rows.length; i++) {
       if (rows[i][0] === data.orderId) {
+        // Snapshot the row before deletion so the activity log preserves
+        // a full record of what was wiped.
+        var deleted = {
+          id:        rows[i][0],
+          name:      rows[i][1],
+          contact:   rows[i][2],
+          address:   rows[i][3],
+          size:      rows[i][4],
+          trays:     rows[i][5],
+          notes:     rows[i][6],
+          status:    rows[i][7],
+          time:      rows[i][8],
+          createdAt: rows[i][9],
+          unitPrice: rows[i][10]
+        };
         sheet.deleteRow(i + 1);
+        logActivity(ss, describeDeletedOrder_(deleted));
         return { success: true, state: getState() };
       }
     }
@@ -329,6 +345,25 @@ function deleteOrder(data) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Format a deleted-order activity log entry that preserves everything
+// useful for audit/recovery in a single readable line. Mirrors the
+// client-side formatter in eggtrack.html.
+function describeDeletedOrder_(o) {
+  var unit  = Number(o.unitPrice) || 0;
+  var trays = Number(o.trays) || 0;
+  var total = unit * trays;
+  var loc   = [o.contact, o.address].filter(function (s) { return s; }).join(', ');
+  var parts = [
+    'Deleted [' + (o.status || 'unknown') + '] order:',
+    o.name + (loc ? ' (' + loc + ')' : ''),
+    '— ' + trays + ' tray' + plural(trays) + ' ' + sizeLabel(o.size) +
+      ' @ ₱' + unit + ' = ₱' + total,
+    '— placed ' + (o.time || 'unknown time')
+  ];
+  if (o.notes) parts.push('— notes: "' + o.notes + '"');
+  return parts.join(' ');
 }
 
 // ── ACTIVITY ───────────────────────────────────────────────────

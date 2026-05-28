@@ -731,6 +731,23 @@ function pushActivity(text) {
   state.activity.push({ action: text, time: 'Just now' });
 }
 
+// Format a deleted-order activity log entry. Mirrors describeDeletedOrder_
+// on the server so the optimistic line matches the canonical one.
+function describeDeletedOrder(o) {
+  const unit  = Number(o.unitPrice) || Number(state.prices[o.size]) || 0;
+  const trays = Number(o.trays) || 0;
+  const total = unit * trays;
+  const loc   = [o.contact, o.address].filter(Boolean).join(', ');
+  const parts = [
+    `Deleted [${o.status || 'unknown'}] order:`,
+    o.name + (loc ? ` (${loc})` : ''),
+    `— ${trays} tray${trays === 1 ? '' : 's'} ${SIZE_LABELS[o.size] || o.size} @ ₱${unit} = ₱${total}`,
+    `— placed ${o.time || 'unknown time'}`
+  ];
+  if (o.notes) parts.push(`— notes: "${o.notes}"`);
+  return parts.join(' ');
+}
+
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
@@ -1294,8 +1311,11 @@ async function deleteOrder(id) {
   const msg = `⚠️ Permanently delete:\n\n${label}\n\nThis erases the row from the Google Sheet. It cannot be undone.`;
   if (!confirm(msg)) return;
 
-  // Optimistic
+  // Optimistic — log the full deletion before removing the order, so the
+  // activity entry survives the optimistic mutation and matches the
+  // server-side audit log when it arrives.
   const snap = snapshot();
+  if (o) pushActivity(describeDeletedOrder(o));
   state.orders = state.orders.filter(x => x.id !== id);
   renderAll();
 
