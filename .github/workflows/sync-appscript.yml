@@ -1,0 +1,74 @@
+name: Sync Code.gs to Apps Script
+
+# Runs on any push to main that touches Code.gs (or the manifest), and can
+# also be triggered manually from the Actions tab.
+#
+# REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
+#   CLASPRC_JSON   — full contents of ~/.clasprc.json from `clasp login`
+#   CLASP_JSON     — full contents of .clasp.json from `clasp clone <scriptId>`
+#   DEPLOYMENT_ID  — existing deployment ID (Deploy → Manage deployments)
+#
+# REQUIRED FILE IN REPO:
+#   appsscript.json — the Apps Script manifest (produced by `clasp clone`).
+#                     Commit this alongside Code.gs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Code.gs'
+      - 'appsscript.json'
+      - '.github/workflows/sync-appscript.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install clasp
+        run: npm install -g @google/clasp
+
+      - name: Verify required secrets
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASP_JSON: ${{ secrets.CLASP_JSON }}
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+        run: |
+          missing=""
+          [ -z "$CLASPRC_JSON" ]  && missing="$missing CLASPRC_JSON"
+          [ -z "$CLASP_JSON" ]    && missing="$missing CLASP_JSON"
+          [ -z "$DEPLOYMENT_ID" ] && missing="$missing DEPLOYMENT_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secret(s):$missing"
+            exit 1
+          fi
+          if [ ! -f appsscript.json ]; then
+            echo "::error::appsscript.json is missing from the repo. Run 'clasp clone <scriptId>' locally and commit appsscript.json."
+            exit 1
+          fi
+
+      - name: Write clasp credentials
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASP_JSON: ${{ secrets.CLASP_JSON }}
+        run: |
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+          printf '%s' "$CLASP_JSON" > .clasp.json
+
+      - name: Push Code.gs to Apps Script
+        run: clasp push -f
+
+      - name: Update existing deployment
+        env:
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+          DESCRIPTION: "auto-deploy ${{ github.sha }}"
+        run: clasp deploy --deploymentId "$DEPLOYMENT_ID" --description "$DESCRIPTION"
