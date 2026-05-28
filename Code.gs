@@ -372,14 +372,19 @@ function readActivity(ss) {
   var rows = ss.getSheetByName(SHEET_ACTIVITY).getDataRange().getValues();
   var log  = [];
   for (var i = 1; i < rows.length; i++) {
-    log.push({ action: rows[i][0], time: rows[i][1] });
+    log.push({
+      action:    rows[i][0],
+      time:      rows[i][1],          // legacy pre-formatted string (script TZ)
+      createdAt: rows[i][2] || null   // epoch ms; null for pre-migration rows
+    });
   }
   return log;
 }
 
 function logActivity(ss, action) {
-  var time  = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MMM d, h:mm a');
-  ss.getSheetByName(SHEET_ACTIVITY).appendRow([asText_(action), time]);
+  var ts    = Date.now();
+  var time  = Utilities.formatDate(new Date(ts), Session.getScriptTimeZone(), 'MMM d, h:mm a');
+  ss.getSheetByName(SHEET_ACTIVITY).appendRow([asText_(action), time, ts]);
 }
 
 // Escape strings that start with a Sheets formula starter (=, +, -, @) so
@@ -536,8 +541,8 @@ function setupSpreadsheet() {
   // Activity
   var activity = getOrCreate(ss, SHEET_ACTIVITY);
   if (activity.getLastRow() === 0) {
-    activity.appendRow(['action','time']);
-    activity.getRange('A1:B1').setFontWeight('bold');
+    activity.appendRow(['action','time','createdAt']);
+    activity.getRange('A1:C1').setFontWeight('bold');
   }
 
   // Config (admin PIN hash + future key/value settings)
@@ -575,6 +580,7 @@ function migrate() {
   var report = [];
 
   ensureAllSheets_(ss, report);
+  upgradeActivitySchema_(ss, report);
   upgradeOrdersSchema_(ss, report);
   backfillUnitPrice_(ss, report);
   backfillStockEvents_(ss, report);
@@ -628,8 +634,8 @@ function ensureAllSheets_(ss, report) {
   }
   if (!ss.getSheetByName(SHEET_ACTIVITY)) {
     var a = ss.insertSheet(SHEET_ACTIVITY);
-    a.appendRow(['action','time']);
-    a.getRange('A1:B1').setFontWeight('bold');
+    a.appendRow(['action','time','createdAt']);
+    a.getRange('A1:C1').setFontWeight('bold');
     report.push('• Created `activity` sheet');
   }
   if (!ss.getSheetByName(SHEET_CONFIG)) {
@@ -649,6 +655,18 @@ function ensureAllSheets_(ss, report) {
     pe.appendRow(['createdAt','time','size','oldPrice','newPrice','actor']);
     pe.getRange('A1:F1').setFontWeight('bold');
     report.push('• Created `price_events` sheet');
+  }
+}
+
+// 2a. Add createdAt (epoch ms) to an older activity sheet.
+function upgradeActivitySchema_(ss, report) {
+  var act = ss.getSheetByName(SHEET_ACTIVITY);
+  if (!act) return;
+  var width   = Math.max(act.getLastColumn(), 3);
+  var headers = act.getRange(1, 1, 1, width).getValues()[0];
+  if (headers[2] !== 'createdAt') {
+    act.getRange(1, 3).setValue('createdAt').setFontWeight('bold');
+    report.push('• Added `activity.createdAt` column (old rows stay client-formatted from their `time` string until new entries land)');
   }
 }
 

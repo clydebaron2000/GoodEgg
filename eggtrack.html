@@ -643,6 +643,31 @@ let orderFilters = {
 };
 
 // ═══════════════════════════════════════════════
+// TIME FORMATTING
+// ═══════════════════════════════════════════════
+// All timestamps are stored as epoch ms server-side. Format on the
+// client using the user's local timezone so people see times in their
+// own clock. If the browser's locale data doesn't include a TZ name,
+// Intl falls back to a "GMT±N" offset string — same effect: the value
+// is never ambiguous.
+function formatTime(epoch) {
+  if (epoch == null) return null;
+  const ms = Number(epoch);
+  if (!isFinite(ms) || ms <= 0) return null;
+  try {
+    return new Date(ms).toLocaleString(undefined, {
+      month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short'
+    });
+  } catch (e) {
+    // Last-resort fallback for environments where Intl is broken.
+    return new Date(ms).toISOString().replace('T', ' ').replace('Z', ' UTC');
+  }
+}
+
+// ═══════════════════════════════════════════════
 // CRYPTO HELPERS
 // ═══════════════════════════════════════════════
 async function sha256(str) {
@@ -728,7 +753,10 @@ function restoreSnapshot(snap) {
 }
 function renderAll() { renderInventory(); renderPricing(); renderOrders(); }
 function pushActivity(text) {
-  state.activity.push({ action: text, time: 'Just now' });
+  // Stamp with a real epoch so the activity row renders in the user's local
+  // timezone via formatTime(). When the server response lands it'll
+  // overwrite this entry with the canonical version (same createdAt).
+  state.activity.push({ action: text, createdAt: Date.now(), time: null });
 }
 
 // Format a deleted-order activity log entry. Mirrors describeDeletedOrder_
@@ -738,11 +766,12 @@ function describeDeletedOrder(o) {
   const trays = Number(o.trays) || 0;
   const total = unit * trays;
   const loc   = [o.contact, o.address].filter(Boolean).join(', ');
+  const placed = formatTime(o.createdAt) || o.time || 'unknown time';
   const parts = [
     `Deleted [${o.status || 'unknown'}] order:`,
     o.name + (loc ? ` (${loc})` : ''),
     `— ${trays} tray${trays === 1 ? '' : 's'} ${SIZE_LABELS[o.size] || o.size} @ ₱${unit} = ₱${total}`,
-    `— placed ${o.time || 'unknown time'}`
+    `— placed ${placed}`
   ];
   if (o.notes) parts.push(`— notes: "${o.notes}"`);
   return parts.join(' ');
@@ -930,7 +959,7 @@ function renderInventory() {
     : log.map(a => `
       <div class="activity-item">
         <span class="activity-text">${a.action}</span>
-        <span class="activity-time">${a.time}</span>
+        <span class="activity-time">${formatTime(a.createdAt) || a.time || ''}</span>
       </div>`).join('');
 }
 
@@ -1060,7 +1089,7 @@ function orderCard(o) {
         <span style="font-size:13px;color:var(--green-700);font-weight:600;margin-left:auto;">₱${value.toLocaleString()}</span>
       </div>
       ${o.notes ? `<div class="order-meta"><i class="ti ti-note" style="font-size:12px;"></i> ${o.notes}</div>` : ''}
-      <div class="order-meta">${o.time}</div>
+      <div class="order-meta">${formatTime(o.createdAt) || o.time || ''}</div>
       ${isAdmin ? `
       <div class="order-actions" style="gap:8px;align-items:stretch;">
         <div class="status-segment" role="group" aria-label="Order status">
