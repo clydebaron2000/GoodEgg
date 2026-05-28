@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════
-// EggTrack — Google Apps Script Backend
+// The Good Egg — Google Apps Script Backend
 // Paste this entire file into your Google Apps Script editor.
 // Run setupSpreadsheet() once before deploying.
 // Deploy as: Execute as Me | Access: Anyone (anonymous)
@@ -670,7 +670,7 @@ function setupSpreadsheet() {
 
   applyTextFormats_(ss, []);  // freeform columns must not be parsed as formulas
 
-  showResult_('✅ EggTrack setup complete!\n\nDefault admin PIN is: 1234\nChange it in the app after first login.');
+  showResult_('✅ The Good Egg setup complete!\n\nDefault admin PIN is: 1234\nChange it in the app after first login.');
 }
 
 function getOrCreate(ss, name) {
@@ -927,7 +927,7 @@ function migrate() {
   var body = report.length
     ? report.join('\n')
     : 'Already up to date — nothing to migrate.';
-  var msg = 'EggTrack migration complete.\n\n' + body +
+  var msg = 'The Good Egg migration complete.\n\n' + body +
             '\n\nThis function is idempotent — re-run it any time after a Code.gs update.';
   showResult_(msg);
 }

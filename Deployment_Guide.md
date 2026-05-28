@@ -1,4 +1,4 @@
-# EggTrack — Deployment Guide
+# The Good Egg — Deployment Guide
 
 Estimated time: **30–40 minutes**. No coding required — just copy-paste steps.
 
@@ -15,7 +15,7 @@ Estimated time: **30–40 minutes**. No coding required — just copy-paste step
 
 **Step 1.** Go to [sheets.google.com](https://sheets.google.com) and click **Blank spreadsheet**.
 
-**Step 2.** Name it something memorable — click "Untitled spreadsheet" at the top and type **EggTrack**.
+**Step 2.** Name it something memorable — click "Untitled spreadsheet" at the top and type **The Good Egg**.
 
 **Step 3.** Open the Apps Script editor: click the menu **Extensions → Apps Script**.
 
@@ -25,7 +25,7 @@ Estimated time: **30–40 minutes**. No coding required — just copy-paste step
 
 **Step 5.** Open the `Code.gs` file from this folder in any text editor (Notepad, TextEdit, etc.). Select all the text, copy it, and paste it into the Apps Script editor.
 
-**Step 6.** Click the **Save** button (floppy disk icon, or Ctrl+S / Cmd+S). Name the project **EggTrack** when prompted.
+**Step 6.** Click the **Save** button (floppy disk icon, or Ctrl+S / Cmd+S). Name the project **The Good Egg** when prompted.
 
 ---
 
@@ -37,7 +37,7 @@ Estimated time: **30–40 minutes**. No coding required — just copy-paste step
 
 > The first time you run it, Google will ask for permissions. Click **Review permissions → Choose your Google account → Allow**. This lets the script read and write to your spreadsheet.
 
-**Step 9.** After it runs, you should see an alert popup saying **"EggTrack setup complete! Default admin PIN is: 1234"**. Click OK.
+**Step 9.** After it runs, you should see an alert popup saying **"The Good Egg setup complete! Default admin PIN is: 1234"**. Click OK.
 
 **Step 10.** Go back to your spreadsheet tab and refresh the page. You should now see four new sheets at the bottom: **stock**, **prices**, **orders**, **activity**. Each one has the correct column headers and starting data.
 
@@ -52,7 +52,7 @@ Estimated time: **30–40 minutes**. No coding required — just copy-paste step
 **Step 13.** Click the gear icon ⚙ next to "Select type" and choose **Web app**.
 
 **Step 14.** Fill in the settings:
-- **Description:** EggTrack API
+- **Description:** The Good Egg API
 - **Execute as:** Me
 - **Who has access:** Anyone
 
