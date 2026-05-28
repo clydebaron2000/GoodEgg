@@ -615,7 +615,30 @@ function applyState(data) {
   if (data.prices)   state.prices   = data.prices;
   if (data.orders)   state.orders   = data.orders;
   if (data.activity) state.activity = data.activity;
-  render();
+  renderAll();
+}
+
+// ── Optimistic-update helpers ─────────────────────────────────
+// snapshot() captures a deep copy of the state so we can roll back
+// if the server rejects an optimistically-applied change.
+function snapshot() {
+  return {
+    stock:    JSON.parse(JSON.stringify(state.stock)),
+    prices:   JSON.parse(JSON.stringify(state.prices)),
+    orders:   JSON.parse(JSON.stringify(state.orders)),
+    activity: JSON.parse(JSON.stringify(state.activity))
+  };
+}
+function restoreSnapshot(snap) {
+  state.stock    = snap.stock;
+  state.prices   = snap.prices;
+  state.orders   = snap.orders;
+  state.activity = snap.activity;
+  renderAll();
+}
+function renderAll() { renderInventory(); renderPricing(); renderOrders(); }
+function pushActivity(text) {
+  state.activity.push({ action: text, time: 'Just now' });
 }
 
 function startPolling() {
@@ -871,16 +894,26 @@ async function addStock() {
   const note  = document.getElementById('add-note').value.trim();
   if (!trays || trays < 1) { showToast('Enter a valid tray count', true); return; }
 
+  // Optimistic: apply locally now so the UI feels instant.
+  const snap = snapshot();
+  state.stock[size] = (state.stock[size] || 0) + trays;
+  pushActivity(`+${trays} tray${trays>1?'s':''} ${SIZE_LABELS[size]}${note ? ' — ' + note : ''}`);
+  document.getElementById('add-trays').value = '';
+  document.getElementById('add-note').value  = '';
+  renderAll();
+
   const btn = document.getElementById('btn-add-stock');
   setLoading(btn, true, 'Adding…');
+  setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'addStock', size, trays, note, pinHash: adminPinHash });
-    if (res.error) { showToast(res.error, true); return; }
-    document.getElementById('add-trays').value = '';
-    document.getElementById('add-note').value  = '';
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
     if (res.state) applyState(res.state);
+    setSyncStatus('ok');
     showToast(`Added ${trays} tray${trays>1?'s':''} of ${SIZE_LABELS[size]}`);
   } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
     showToast('Failed to save. Check connection.', true);
   } finally {
     setLoading(btn, false, '<i class="ti ti-plus"></i>Add trays');
@@ -897,17 +930,28 @@ async function deductStock() {
   const size  = document.getElementById('deduct-size').value;
   const trays = parseInt(document.getElementById('deduct-trays').value);
   if (!trays || trays < 1) { showToast('Enter a valid tray count', true); return; }
+  if ((state.stock[size] || 0) < trays) { showToast('Not enough stock to deduct', true); return; }
+
+  // Optimistic
+  const snap = snapshot();
+  state.stock[size] -= trays;
+  pushActivity(`-${trays} tray${trays>1?'s':''} ${SIZE_LABELS[size]} (sold)`);
+  closeModal('deduct-modal');
+  renderAll();
 
   const btn = document.getElementById('btn-confirm-deduct');
   setLoading(btn, true, 'Saving…');
+  setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'deductStock', size, trays, pinHash: adminPinHash });
-    if (res.code === 'INSUFFICIENT_STOCK') { showToast('Not enough stock to deduct', true); return; }
-    if (res.error) { showToast(res.error, true); return; }
-    closeModal('deduct-modal');
+    if (res.code === 'INSUFFICIENT_STOCK') { restoreSnapshot(snap); setSyncStatus('error'); showToast('Not enough stock to deduct', true); return; }
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
     if (res.state) applyState(res.state);
+    setSyncStatus('ok');
     showToast(`Deducted ${trays} tray${trays>1?'s':''} from ${SIZE_LABELS[size]}`);
   } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
     showToast('Failed to save. Check connection.', true);
   } finally {
     setLoading(btn, false, '<i class="ti ti-check"></i>Confirm');
@@ -925,14 +969,24 @@ async function savePrices() {
     if (el) { const v = parseFloat(el.value); if (!isNaN(v) && v >= 0) prices[k] = v; }
   });
 
+  // Optimistic
+  const snap = snapshot();
+  Object.assign(state.prices, prices);
+  pushActivity('Prices updated');
+  renderAll();
+
   const btn = document.getElementById('btn-save-prices');
   setLoading(btn, true, 'Saving…');
+  setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'savePrices', prices, pinHash: adminPinHash });
-    if (res.error) { showToast(res.error, true); return; }
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
     if (res.state) applyState(res.state);
+    setSyncStatus('ok');
     showToast('Prices saved and updated');
   } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
     showToast('Failed to save. Check connection.', true);
   } finally {
     setLoading(btn, false, '<i class="ti ti-device-floppy"></i>Save prices');
@@ -964,20 +1018,32 @@ async function submitOrder() {
     status: 'pending', time: now()
   };
 
+  // Optimistic: add the order to the list so the customer sees it immediately.
+  // We intentionally do NOT clear the form yet — only on confirmed success —
+  // so the customer can retry without re-typing if the network drops.
+  const snap = snapshot();
+  state.orders.push(order);
+  pushActivity(`Order: ${name} — ${trays} tray${trays>1?'s':''} ${SIZE_LABELS[size]}`);
+  renderAll();
+
   const btn = document.getElementById('btn-submit-order');
   setLoading(btn, true, 'Submitting…');
+  setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'submitOrder', order });
-    if (res.error) { showToast(res.error, true); return; }
-    // Clear form and reset dedup ID only on confirmed success
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
+    // Confirmed — clear form and rotate the dedup ID
     ['res-name','res-contact','res-address','res-trays','res-notes'].forEach(id => {
       document.getElementById(id).value = '';
     });
-    pendingOrderId = generateUUID(); // fresh ID for next order
+    pendingOrderId = generateUUID();
     if (res.state) applyState(res.state);
+    setSyncStatus('ok');
     showToast(`Order submitted! We'll contact you at ${contact}`);
     switchTab('inventory');
   } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
     showToast('Could not submit. Please try again.', true);
     // pendingOrderId is preserved — retry will be idempotent
   } finally {
@@ -986,26 +1052,48 @@ async function submitOrder() {
 }
 
 async function updateOrderStatus(id, status) {
+  const idx = state.orders.findIndex(o => o.id === id);
+  if (idx === -1) return;
+
+  // Optimistic
+  const snap  = snapshot();
+  const orderName = state.orders[idx].name;
+  state.orders[idx].status = status;
+  pushActivity(`Order ${status}: ${orderName}`);
+  renderAll();
+
+  setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'updateOrderStatus', orderId: id, status, pinHash: adminPinHash });
-    if (res.error) { showToast(res.error, true); return; }
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
     if (res.state) applyState(res.state);
-    renderOrders();
+    setSyncStatus('ok');
     showToast(`Order marked as ${status}`);
   } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
     showToast('Failed. Check connection.', true);
   }
 }
 
 async function deleteOrder(id) {
   if (!confirm('Delete this order?')) return;
+
+  // Optimistic
+  const snap = snapshot();
+  state.orders = state.orders.filter(o => o.id !== id);
+  renderAll();
+
+  setSyncStatus('syncing');
   try {
     const res = await callScript({ action: 'deleteOrder', orderId: id, pinHash: adminPinHash });
-    if (res.error) { showToast(res.error, true); return; }
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
     if (res.state) applyState(res.state);
-    renderOrders();
+    setSyncStatus('ok');
     showToast('Order deleted');
   } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
     showToast('Failed. Check connection.', true);
   }
 }
@@ -1088,7 +1176,7 @@ pendingOrderId = generateUUID();
 
 if (SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
   // Dev mode: show app with default state
-  render();
+  renderAll();
   showToast('Add your SCRIPT_URL to connect to Google Sheets', true);
 } else {
   loadState().then(startPolling);
