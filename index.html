@@ -5,35 +5,64 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="EggTrack">
-<meta name="theme-color" content="#3B6D11">
-<title>EggTrack – Poultry Farm</title>
+<meta name="apple-mobile-web-app-title" content="The Good Egg">
+<meta name="theme-color" content="#6B4226">
+<title>The Good Egg – Farm Fresh Eggs</title>
+<meta name="description" content="Tracking your farm fresh eggs — inventory, pricing, and orders for The Good Egg farm.">
+<link rel="icon" type="image/jpeg" href="logo.jpg">
+<link rel="apple-touch-icon" href="logo.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/tabler-icons.min.css">
 <style>
   :root {
-    --green-900: #173404;
-    --green-800: #27500A;
-    --green-700: #3B6D11;
-    --green-600: #4a8a15;
-    --green-100: #C0DD97;
-    --green-50:  #EAF3DE;
-    --amber-800: #633806;
-    --amber-50:  #FAEEDA;
-    --red-800:   #501313;
-    --red-50:    #FCEBEB;
-    --gray-bg:   #f7f5f0;
-    --card-bg:   #ffffff;
-    --text-pri:  #1a1a18;
-    --text-sec:  #5a5a55;
-    --text-ter:  #9a9990;
-    --border:    rgba(60,60,40,0.12);
-    --border-med:rgba(60,60,40,0.22);
+    /* THE GOOD EGG — Brand palette
+       Brown = primary brand (the "THE / EGG" letters, tagline);
+       Mustard yellow = accent (the "GOOD" letters);
+       Cream/ivory = warm canvas (egg-white tones).               */
+
+    /* Primary brown ramp */
+    --brown-900: #3D1F0E;
+    --brown-800: #5C3520;
+    --brown-700: #6B4226;   /* main brand brown — top nav, primary buttons */
+    --brown-600: #8B5A3C;
+    --brown-100: #E8D5BC;
+    --brown-50:  #F5E6D3;
+
+    /* Mustard/golden yellow accent ("GOOD" letters in the logo) */
+    --yellow-700: #B88A2E;
+    --yellow-500: #E8B95A;  /* the accent — chips, callouts, focus rings */
+    --yellow-300: #F4D78A;
+    --yellow-100: #FAEEC9;
+
+    /* Status trio — earth-tone analogues that share brown's warm undertone.
+       Picked for color-theory harmony with the brand: each is in the same
+       warm quadrant as #6B4226 (yellow-green / golden-ochre / terracotta)
+       so the indicators read as semantically distinct without clashing
+       with the rest of the palette. */
+    --sage-800:  #4F6128;   /* In stock / good — warm olive */
+    --sage-50:   #E5ECCC;
+    --amber-800: #7A4D14;   /* Low stock / warning — rich ochre */
+    --amber-50:  #F7E4C3;
+    --red-800:   #7A2E1F;   /* Out of stock / danger — warm terracotta */
+    --red-50:    #F5D5C5;
+
+    /* Surfaces */
+    --gray-bg:   #FBF6E9;   /* page background (warm cream) */
+    --card-bg:   #FFFCF5;   /* card surface (ivory) */
+
+    /* Text */
+    --text-pri:  #2C1810;
+    --text-sec:  #6B4F3F;
+    --text-ter:  #9E8475;
+    --border:    rgba(76,46,22,0.15);
+    --border-med:rgba(76,46,22,0.28);
+
+    /* Radii / shadow — unchanged */
     --radius-sm: 8px;
     --radius-md: 12px;
     --radius-lg: 18px;
-    --shadow:    0 2px 12px rgba(0,0,0,0.07);
+    --shadow:    0 2px 12px rgba(76,46,22,0.10);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -50,19 +79,22 @@
 
   /* ── TOP NAV ── */
   .top-nav {
-    background: var(--green-700);
+    background: var(--brown-700);
     padding: 14px 20px 12px;
     display: flex; align-items: center; gap: 12px;
     position: sticky; top: 0; z-index: 100;
   }
   .top-nav .brand { display: flex; align-items: center; gap: 10px; flex: 1; }
   .top-nav .logo-icon {
-    width: 36px; height: 36px; border-radius: 10px;
-    background: rgba(255,255,255,0.18);
+    width: 40px; height: 40px; border-radius: 10px;
+    background: #FFFCF5;
     display: flex; align-items: center; justify-content: center;
-    font-size: 20px; color: #fff;
+    overflow: hidden;
+    flex-shrink: 0;
   }
+  .top-nav .logo-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
   .top-nav .brand-text .app-name { font-family: 'DM Serif Display', serif; font-size: 20px; color: #fff; line-height: 1; }
+  .top-nav .brand-text .app-name .brand-accent { color: var(--yellow-300); }
   .top-nav .brand-text .app-sub  { font-size: 11px; color: rgba(255,255,255,0.65); margin-top: 1px; }
   .top-nav .mode-btns { display: flex; gap: 6px; }
   .mode-btn {
@@ -70,11 +102,11 @@
     font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 500;
     color: rgba(255,255,255,0.75); background: transparent; cursor: pointer; transition: all .2s;
   }
-  .mode-btn.active { background: #fff; color: var(--green-800); border-color: #fff; }
+  .mode-btn.active { background: #fff; color: var(--brown-800); border-color: #fff; }
 
   /* ── SYNC STATUS ── */
   .sync-bar {
-    background: var(--green-800); color: rgba(255,255,255,0.8);
+    background: var(--brown-800); color: rgba(255,255,255,0.8);
     font-size: 11px; text-align: center; padding: 4px 16px;
     display: none; align-items: center; justify-content: center; gap: 6px;
   }
@@ -97,7 +129,7 @@
     transition: all .2s;
   }
   .tab-btn i { font-size: 20px; }
-  .tab-btn.active { color: var(--green-700); border-bottom-color: var(--green-700); }
+  .tab-btn.active { color: var(--brown-700); border-bottom-color: var(--yellow-500); }
 
   /* ── SCROLL BODY ── */
   .page { display: none; padding: 16px; flex: 1; }
@@ -114,16 +146,16 @@
     letter-spacing: .06em; color: var(--text-sec);
     display: flex; align-items: center; gap: 6px; margin-bottom: 14px;
   }
-  .card-title i { font-size: 16px; color: var(--green-700); }
+  .card-title i { font-size: 16px; color: var(--brown-700); }
 
   /* ── METRICS ── */
   .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
   .metric-card {
-    background: var(--green-50); border-radius: var(--radius-md);
+    background: var(--brown-50); border-radius: var(--radius-md);
     padding: 14px; text-align: center;
   }
-  .metric-val   { font-family: 'DM Serif Display', serif; font-size: 30px; color: var(--green-800); line-height: 1; }
-  .metric-label { font-size: 11px; color: var(--green-800); opacity: .7; margin-top: 4px; font-weight: 500; }
+  .metric-val   { font-family: 'DM Serif Display', serif; font-size: 30px; color: var(--brown-800); line-height: 1; }
+  .metric-label { font-size: 11px; color: var(--brown-800); opacity: .7; margin-top: 4px; font-weight: 500; }
   .metric-sub   { font-size: 10px; color: var(--text-ter); margin-top: 2px; }
 
   /* ── INVENTORY TABLE ── */
@@ -132,11 +164,11 @@
   .inv-table td { padding: 10px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   .inv-table tr:last-child td { border-bottom: none; }
   .inv-table .size-name  { font-weight: 600; font-size: 14px; }
-  .inv-table .tray-count { font-family: 'DM Serif Display', serif; font-size: 20px; color: var(--green-700); }
+  .inv-table .tray-count { font-family: 'DM Serif Display', serif; font-size: 20px; color: var(--brown-700); }
 
   /* ── BADGES ── */
   .badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
-  .badge-good { background: var(--green-50);  color: var(--green-800); }
+  .badge-good { background: var(--sage-50);   color: var(--sage-800); }
   .badge-low  { background: var(--amber-50);  color: var(--amber-800); }
   .badge-out  { background: var(--red-50);    color: var(--red-800); }
 
@@ -149,7 +181,7 @@
     font-size: 14px; background: #fff; color: var(--text-pri);
     transition: border-color .2s; outline: none;
   }
-  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--green-700); }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--brown-700); }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
   /* ── BUTTONS ── */
@@ -159,10 +191,10 @@
     font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600;
     cursor: pointer; transition: all .15s; border: none;
   }
-  .btn-primary { background: var(--green-700); color: #fff; }
-  .btn-primary:hover { background: var(--green-800); }
-  .btn-outline { background: transparent; color: var(--green-700); border: 1.5px solid var(--green-700); }
-  .btn-outline:hover { background: var(--green-50); }
+  .btn-primary { background: var(--brown-700); color: #fff; }
+  .btn-primary:hover { background: var(--brown-800); }
+  .btn-outline { background: transparent; color: var(--brown-700); border: 1.5px solid var(--brown-700); }
+  .btn-outline:hover { background: var(--brown-50); }
   .btn-danger  { background: var(--red-50); color: var(--red-800); }
   .btn-danger:hover { background: #f7c1c1; }
   .btn-sm   { padding: 7px 14px; font-size: 12px; }
@@ -183,9 +215,9 @@
   }
   .filter-chip:hover { background: var(--gray-bg); }
   .filter-chip.active {
-    background: var(--green-700);
-    color: #fff;
-    border-color: var(--green-700);
+    background: var(--yellow-500);
+    color: var(--brown-900);
+    border-color: var(--yellow-700);
   }
 
   /* ── STATUS SEGMENTED CONTROL (order cards) ── */
@@ -209,10 +241,10 @@
     cursor: pointer;
     transition: all .12s;
   }
-  .status-segment button:hover:not(.current) { color: var(--green-700); }
+  .status-segment button:hover:not(.current) { color: var(--brown-700); }
   .status-segment button.current {
     background: #fff;
-    color: var(--green-700);
+    color: var(--brown-700);
     box-shadow: 0 1px 3px rgba(0,0,0,.08);
     cursor: default;
   }
@@ -223,30 +255,30 @@
   .price-size  { flex: 1; font-weight: 600; font-size: 15px; }
   .price-per   { font-size: 11px; color: var(--text-ter); }
   .price-input { width: 100px; padding: 8px 10px; border: 1.5px solid var(--border-med); border-radius: var(--radius-sm); font-family: 'DM Serif Display', serif; font-size: 18px; text-align: right; outline: none; }
-  .price-input:focus { border-color: var(--green-700); }
+  .price-input:focus { border-color: var(--brown-700); }
 
   /* ── ORDERS ── */
   .order-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px; margin-bottom: 10px; }
   .order-name   { font-weight: 600; font-size: 15px; }
   .order-detail { font-size: 13px; color: var(--text-sec); margin-top: 3px; display: flex; align-items: center; gap: 5px; }
   .order-detail i { font-size: 14px; color: var(--text-ter); }
-  .order-size-badge { font-size: 12px; font-weight: 600; color: var(--green-800); background: var(--green-50); padding: 3px 10px; border-radius: 20px; }
+  .order-size-badge { font-size: 12px; font-weight: 600; color: var(--brown-800); background: var(--brown-50); padding: 3px 10px; border-radius: 20px; }
   .order-meta    { font-size: 11px; color: var(--text-ter); margin-top: 6px; }
   .order-actions { display: flex; gap: 8px; margin-top: 10px; }
 
   /* ── STATUS BANNER ── */
   .status-banner {
-    background: var(--green-50); border: 1px solid var(--green-100);
+    background: var(--brown-50); border: 1px solid var(--brown-100);
     border-radius: var(--radius-md); padding: 12px 16px;
     display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
-    font-size: 13px; color: var(--green-800); font-weight: 500;
+    font-size: 13px; color: var(--brown-800); font-weight: 500;
   }
-  .status-banner i { font-size: 18px; color: var(--green-700); }
+  .status-banner i { font-size: 18px; color: var(--brown-700); }
 
   /* ── TOAST ── */
   .toast {
     position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%) translateY(20px);
-    background: var(--green-800); color: #fff;
+    background: var(--brown-800); color: #fff;
     padding: 12px 20px; border-radius: var(--radius-md);
     font-size: 14px; font-weight: 500; opacity: 0;
     transition: all .3s; pointer-events: none; z-index: 999;
@@ -262,7 +294,7 @@
 
   /* ── LOADING ── */
   .loading { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 20px; color: var(--text-sec); font-size: 13px; }
-  .spinner { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--green-700); border-radius: 50%; animation: spin .7s linear infinite; }
+  .spinner { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--brown-700); border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── MODAL ── */
@@ -290,11 +322,12 @@
     align-items: center; justify-content: center; padding: 40px 24px;
     background: var(--gray-bg);
   }
-  .pin-logo { font-family: 'DM Serif Display', serif; font-size: 36px; color: var(--green-700); margin-bottom: 6px; }
+  .pin-logo-img { width: 160px; height: 160px; object-fit: contain; margin-bottom: 8px; }
+  .pin-logo { font-family: 'DM Serif Display', serif; font-size: 28px; color: var(--brown-700); margin-bottom: 4px; }
   .pin-sub  { font-size: 14px; color: var(--text-sec); margin-bottom: 30px; }
   .pin-dots { display: flex; gap: 12px; justify-content: center; margin: 20px 0; }
-  .pin-dot  { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--green-600); background: transparent; transition: background .15s; }
-  .pin-dot.filled { background: var(--green-700); border-color: var(--green-700); }
+  .pin-dot  { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--brown-600); background: transparent; transition: background .15s; }
+  .pin-dot.filled { background: var(--brown-700); border-color: var(--brown-700); }
   .pin-pad  { display: grid; grid-template-columns: repeat(3, 72px); gap: 12px; justify-content: center; }
   .pin-key {
     width: 72px; height: 72px; border-radius: 50%; border: 1.5px solid var(--border-med);
@@ -303,7 +336,7 @@
     cursor: pointer; display: flex; align-items: center; justify-content: center;
     box-shadow: var(--shadow); transition: all .12s;
   }
-  .pin-key:active  { background: var(--green-50); transform: scale(.94); }
+  .pin-key:active  { background: var(--brown-50); transform: scale(.94); }
   .pin-key:disabled { opacity: .4; cursor: not-allowed; }
   .pin-error { color: var(--red-800); font-size: 13px; text-align: center; margin-top: 8px; min-height: 18px; }
 
@@ -321,8 +354,8 @@
 
 <!-- PIN SCREEN -->
 <div id="pin-screen" class="pin-screen" style="display:none;">
-  <div class="pin-logo">🥚 EggTrack</div>
-  <div class="pin-sub">Enter admin PIN to manage inventory</div>
+  <img src="logo.jpg" alt="The Good Egg" class="pin-logo-img">
+  <div class="pin-sub">Tracking your farm fresh eggs</div>
   <div class="pin-dots" id="pin-dots">
     <div class="pin-dot" id="dot0"></div>
     <div class="pin-dot" id="dot1"></div>
@@ -351,10 +384,10 @@
 <div id="app" style="display:none;">
   <nav class="top-nav">
     <div class="brand">
-      <div class="logo-icon"><i class="ti ti-egg" aria-hidden="true"></i></div>
+      <div class="logo-icon"><img src="logo.jpg" alt="The Good Egg logo"></div>
       <div class="brand-text">
-        <div class="app-name">EggTrack</div>
-        <div class="app-sub">Poultry Farm Management</div>
+        <div class="app-name">The <span class="brand-accent">Good</span> Egg</div>
+        <div class="app-sub">Farm Fresh Eggs</div>
       </div>
     </div>
     <div class="mode-btns">
@@ -415,7 +448,7 @@
       </div>
 
       <div class="card">
-        <div class="card-title"><i class="ti ti-circle-plus"></i>Add stock</div>
+        <div class="card-title"><i class="ti ti-circle-plus"></i>Collect today's eggs</div>
         <div class="row2">
           <div class="field">
             <label>Size</label>
@@ -432,7 +465,7 @@
         </div>
         <div style="display:flex;gap:10px;">
           <button class="btn btn-primary" id="btn-add-stock" onclick="addStock()"><i class="ti ti-plus"></i>Add trays</button>
-          <button class="btn btn-outline" id="btn-deduct"    onclick="promptDeduct()"><i class="ti ti-minus"></i>Deduct sold</button>
+          <button class="btn btn-outline" id="btn-deduct"    onclick="promptDeduct()"><i class="ti ti-minus"></i>Mark a sale</button>
         </div>
       </div>
     </div>
@@ -511,7 +544,7 @@
   <!-- ─── RESERVE PAGE ─── -->
   <div class="page" id="page-reserve">
     <div class="card">
-      <div class="card-title"><i class="ti ti-clipboard-plus"></i>Place an order</div>
+      <div class="card-title"><i class="ti ti-clipboard-plus"></i>Place your egg order</div>
       <div class="field">
         <label>Your full name</label>
         <input type="text" id="res-name" placeholder="e.g. Maria Santos">
@@ -542,12 +575,12 @@
         <i class="ti ti-send"></i>Submit order
       </button>
     </div>
-    <div class="card" style="background:var(--green-50);border-color:var(--green-100);">
+    <div class="card" style="background:var(--brown-50);border-color:var(--brown-100);">
       <div style="display:flex;align-items:center;gap:10px;">
-        <i class="ti ti-clock" style="font-size:22px;color:var(--green-700);"></i>
+        <i class="ti ti-clock" style="font-size:22px;color:var(--brown-700);"></i>
         <div>
-          <div style="font-weight:600;font-size:14px;color:var(--green-800);">Order confirmation</div>
-          <div style="font-size:13px;color:var(--green-800);opacity:.75;margin-top:2px;">We will contact you to confirm your order and arrange delivery.</div>
+          <div style="font-weight:600;font-size:14px;color:var(--brown-800);">Order confirmation</div>
+          <div style="font-size:13px;color:var(--brown-800);opacity:.75;margin-top:2px;">We will contact you to confirm your order and arrange delivery.</div>
         </div>
       </div>
     </div>
@@ -557,7 +590,7 @@
 <!-- DEDUCT MODAL -->
 <div class="modal-overlay" id="deduct-modal">
   <div class="modal-box">
-    <div class="modal-title">Deduct sold trays</div>
+    <div class="modal-title">Mark a sale</div>
     <div class="row2">
       <div class="field">
         <label>Size</label>
@@ -1024,7 +1057,7 @@ function renderInventory() {
 
   const log = (state.activity || []).slice(-10).reverse();
   document.getElementById('activity-log').innerHTML = log.length === 0
-    ? '<div class="empty-state" style="padding:20px;"><i class="ti ti-notes" style="font-size:28px;color:var(--text-ter);display:block;margin-bottom:8px;"></i><p>No activity yet.</p></div>'
+    ? '<div class="empty-state" style="padding:20px;"><i class="ti ti-notes" style="font-size:28px;color:var(--text-ter);display:block;margin-bottom:8px;"></i><p>Quiet farm. Activity shows here as eggs come in and orders go out.</p></div>'
     : log.map(a => `
       <div class="activity-item">
         <span class="activity-text">${a.action}</span>
@@ -1041,7 +1074,7 @@ function renderPricing() {
       </div>
       ${isAdmin
         ? `<input class="price-input" type="number" id="price-${k}" value="${state.prices[k] || 0}" min="0" />`
-        : `<span style="font-family:'DM Serif Display',serif;font-size:22px;color:var(--green-700);">₱${state.prices[k] || 0}</span>`
+        : `<span style="font-family:'DM Serif Display',serif;font-size:22px;color:var(--brown-700);">₱${state.prices[k] || 0}</span>`
       }
     </div>`).join('');
 
@@ -1051,7 +1084,7 @@ function renderPricing() {
   }).join('');
   const total = SIZE_ORDER.reduce((s,k) => s + (state.stock[k]||0) * (state.prices[k]||0), 0);
   document.getElementById('value-grid').innerHTML = valueItems +
-    `<div class="metric-card" style="background:var(--green-700);grid-column:span 2"><div class="metric-val" style="color:#fff;font-size:26px;">₱${total.toLocaleString()}</div><div class="metric-label" style="color:rgba(255,255,255,.75);">Total inventory value</div></div>`;
+    `<div class="metric-card" style="background:var(--brown-700);grid-column:span 2"><div class="metric-val" style="color:#fff;font-size:26px;">₱${total.toLocaleString()}</div><div class="metric-label" style="color:rgba(255,255,255,.75);">Total inventory value</div></div>`;
 }
 
 // ── Filtering ──────────────────────────────────────────────────
@@ -1104,7 +1137,7 @@ function renderOrders() {
 
   if (total === 0) {
     document.getElementById('order-count-label').textContent = '';
-    container.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i><p>No orders yet.</p></div>`;
+    container.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i><p>No orders yet — your farm fresh eggs are ready when they are.</p></div>`;
     return;
   }
 
@@ -1155,7 +1188,7 @@ function orderCard(o) {
       <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
         <span class="order-size-badge">${SIZE_LABELS[o.size]}</span>
         <span style="font-size:13px;font-weight:600;">${o.trays} tray${o.trays>1?'s':''}</span>
-        <span style="font-size:13px;color:var(--green-700);font-weight:600;margin-left:auto;">₱${value.toLocaleString()}</span>
+        <span style="font-size:13px;color:var(--brown-700);font-weight:600;margin-left:auto;">₱${value.toLocaleString()}</span>
       </div>
       ${o.notes ? `<div class="order-meta"><i class="ti ti-note" style="font-size:12px;"></i> ${o.notes}</div>` : ''}
       <div class="order-meta">${formatTime(o.createdAt) || o.time || ''}</div>
@@ -1455,7 +1488,7 @@ async function submitOrder() {
     pendingOrderId = generateUUID();
     if (res.state) applyState(res.state);
     setSyncStatus('ok');
-    showToast(`Order submitted! We'll contact you at ${contact}`);
+    showToast(`Order placed — we'll have your eggs ready. We'll reach you at ${contact}.`);
     switchTab('inventory');
   } catch (e) {
     restoreSnapshot(snap);
@@ -1630,17 +1663,22 @@ if (SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
 <!-- PWA MANIFEST -->
 <script>
 (function() {
+  // The manifest is served as a blob URL, so relative icon src would
+  // resolve against `blob:` instead of the document. Absolutize against
+  // the page's URL so each deploy (root + /preview/<branch>/) picks up
+  // the logo from the right place.
+  const logoUrl = new URL('logo.jpg', document.baseURI).href;
   const manifest = {
-    name: "EggTrack – Poultry Farm",
-    short_name: "EggTrack",
-    description: "Poultry egg inventory, pricing and order management",
+    name: "The Good Egg – Farm Fresh Eggs",
+    short_name: "The Good Egg",
+    description: "Tracking your farm fresh eggs — inventory, pricing, and orders.",
     start_url: ".",
     display: "standalone",
-    background_color: "#f7f5f0",
-    theme_color: "#3B6D11",
+    background_color: "#FBF6E9",
+    theme_color: "#6B4226",
     icons: [
-      { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>", sizes: "192x192", type: "image/svg+xml" },
-      { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>", sizes: "512x512", type: "image/svg+xml" }
+      { src: logoUrl, sizes: "192x192", type: "image/jpeg" },
+      { src: logoUrl, sizes: "512x512", type: "image/jpeg" }
     ]
   };
   const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
