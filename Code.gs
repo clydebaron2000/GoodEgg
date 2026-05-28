@@ -677,6 +677,231 @@ function getOrCreate(ss, name) {
   return ss.getSheetByName(name) || ss.insertSheet(name);
 }
 
+// ── DASHBOARD ──────────────────────────────────────────────────
+// Idempotent: run this whenever you want the dashboard rebuilt.
+// Wipes and re-creates a `Dashboard` tab with KPIs and aggregation tables
+// driven by formulas — so the tab stays live as new orders/events land.
+// After the function finishes, add charts via Insert → Chart on each of
+// the aggregation tables (table ranges are labelled).
+
+var SHEET_DASHBOARD = 'Dashboard';
+
+function buildDashboard() {
+  var ss        = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet     = ss.getSheetByName(SHEET_DASHBOARD);
+  if (sheet) ss.deleteSheet(sheet);
+  sheet = ss.insertSheet(SHEET_DASHBOARD, 0);  // place at the very left
+
+  // Row pointers; keep mutable so blocks can grow without manual re-numbering.
+  var row = 1;
+
+  // ── Title row
+  sheet.getRange(row, 1, 1, 8).merge()
+    .setValue('🥚 The Good Egg — Dashboard')
+    .setFontSize(20).setFontWeight('bold')
+    .setBackground('#6B4226').setFontColor('#FFFCF5')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(row, 40);
+  row += 1;
+
+  sheet.getRange(row, 1, 1, 8).merge()
+    .setFormula('="Updated " & TEXT(NOW(), "MMM d, yyyy HH:mm") & " UTC"')
+    .setFontStyle('italic').setFontSize(10).setFontColor('#6B4F3F')
+    .setHorizontalAlignment('center');
+  row += 2;
+
+  // ── Headline KPI cards (two rows of 4)
+  // We pull today's UTC midnight as an epoch ms (Sheets serial date math).
+  // const TODAY_MS = (INT(NOW()) - DATE(1970,1,1)) * 86400000
+  // const MONTH_START_MS = (DATE(YEAR(NOW()), MONTH(NOW()), 1) - DATE(1970,1,1)) * 86400000
+  var todayMs       = '((INT(NOW())-DATE(1970,1,1))*86400000)';
+  var monthStartMs  = '((DATE(YEAR(NOW()),MONTH(NOW()),1)-DATE(1970,1,1))*86400000)';
+
+  var kpis = [
+    // [label, formula, suffix (optional)]
+    ['Trays in stock',  '=SUMPRODUCT(stock!B2:B)',                                                                 ''],
+    ['Eggs in stock',   '=SUMPRODUCT(stock!B2:B)*30',                                                              ''],
+    ['Inventory value', '=SUMPRODUCT(IFERROR(VLOOKUP(stock!A2:A,prices!A:B,2,FALSE),0)*stock!B2:B)',               '₱'],
+    ['Out of stock',    '=COUNTIF(stock!B2:B,0)',                                                                  ''],
+    ['Orders today',    '=COUNTIFS(orders!J2:J,">=" & ' + todayMs + ')',                                            ''],
+    ['Pending orders',  '=COUNTIF(orders!H2:H,"pending")',                                                          ''],
+    ['Revenue today',   '=SUMPRODUCT((orders!H2:H="done")*(orders!J2:J>=' + todayMs + ')*orders!F2:F*IFERROR(orders!K2:K,0))', '₱'],
+    ['Revenue MTD',     '=SUMPRODUCT((orders!H2:H="done")*(orders!J2:J>=' + monthStartMs + ')*orders!F2:F*IFERROR(orders!K2:K,0))', '₱']
+  ];
+
+  var kpiStart = row;
+  for (var i = 0; i < kpis.length; i++) {
+    var col = (i % 4) * 2 + 1;  // 2-wide cards
+    var r   = row + Math.floor(i / 4) * 3;
+    sheet.getRange(r, col, 1, 2).merge()
+      .setValue(kpis[i][0])
+      .setBackground('#F5E6D3').setFontWeight('bold').setFontSize(11)
+      .setFontColor('#6B4F3F').setHorizontalAlignment('center');
+    var valueCell = sheet.getRange(r + 1, col, 1, 2).merge();
+    valueCell.setFormula(kpis[i][1])
+      .setFontSize(18).setFontWeight('bold').setFontColor('#3D1F0E')
+      .setHorizontalAlignment('center').setVerticalAlignment('middle');
+    if (kpis[i][2] === '₱') valueCell.setNumberFormat('"₱"#,##0');
+    else                    valueCell.setNumberFormat('#,##0');
+    sheet.setRowHeight(r + 1, 38);
+  }
+  row = kpiStart + 6 + 1;  // 2 rows of cards × 3 lines each = 6, +1 spacer
+
+  // ── Section: Stock by size (table + chart source)
+  sectionHeader_(sheet, row, 'Current stock by size');
+  row += 1;
+  var stockHeaderRow = row;
+  sheet.getRange(row, 1, 1, 5).setValues([['Size','Trays','Eggs','₱/tray','Value']])
+    .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
+  row += 1;
+  // One row per size in the sizes sheet, ordered by sortOrder.
+  // Use ARRAYFORMULA so the table grows automatically if sizes are added.
+  sheet.getRange(row, 1).setFormula(
+    '=IFERROR(SORT(' +
+      'ARRAYFORMULA({' +
+        'IFERROR(VLOOKUP(stock!A2:A,sizes!A:B,2,FALSE),stock!A2:A),' +
+        'stock!B2:B,' +
+        'stock!B2:B*30,' +
+        'IFERROR(VLOOKUP(stock!A2:A,prices!A:B,2,FALSE),0),' +
+        'stock!B2:B*IFERROR(VLOOKUP(stock!A2:A,prices!A:B,2,FALSE),0)' +
+      '}),2,FALSE),"")'
+  );
+  // Reserve 10 rows for the table; format the value column as currency.
+  sheet.getRange(row, 4, 10, 1).setNumberFormat('"₱"#,##0');
+  sheet.getRange(row, 5, 10, 1).setNumberFormat('"₱"#,##0');
+  var stockTableEnd = row + 9;
+  row = stockTableEnd + 2;
+
+  // ── Section: Daily net flow (last 30 days)
+  sectionHeader_(sheet, row, 'Daily restocked vs sold (last 30 days)');
+  row += 1;
+  sheet.getRange(row, 1, 1, 4).setValues([['Date','Restocked (trays)','Sold (trays)','Net']])
+    .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
+  row += 1;
+  var flowStart = row;
+  // 30 rows, each row = today-i, summing stock_events deltas in that UTC day.
+  for (var d = 0; d < 30; d++) {
+    var dateCell = '(TODAY()-' + d + ')';
+    var dayStart = '((' + dateCell + '-DATE(1970,1,1))*86400000)';
+    var dayEnd   = '((' + dateCell + '+1-DATE(1970,1,1))*86400000)';
+    sheet.getRange(flowStart + d, 1).setFormula('=' + dateCell).setNumberFormat('yyyy-mm-dd');
+    sheet.getRange(flowStart + d, 2).setFormula(
+      '=SUMIFS(stock_events!D:D,stock_events!A:A,">=" & ' + dayStart + ',stock_events!A:A,"<" & ' + dayEnd + ',stock_events!E:E,"restock")'
+    );
+    sheet.getRange(flowStart + d, 3).setFormula(
+      '=-SUMIFS(stock_events!D:D,stock_events!A:A,">=" & ' + dayStart + ',stock_events!A:A,"<" & ' + dayEnd + ',stock_events!E:E,"sold")'
+    );
+    sheet.getRange(flowStart + d, 4).setFormula(
+      '=B' + (flowStart + d) + '-C' + (flowStart + d)
+    );
+  }
+  row = flowStart + 30 + 1;
+
+  // ── Section: Daily revenue (last 30 days)
+  sectionHeader_(sheet, row, 'Daily revenue from completed orders (last 30 days)');
+  row += 1;
+  sheet.getRange(row, 1, 1, 3).setValues([['Date','Orders','Revenue']])
+    .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
+  row += 1;
+  var revStart = row;
+  for (var d2 = 0; d2 < 30; d2++) {
+    var dateCell2 = '(TODAY()-' + d2 + ')';
+    var dayStart2 = '((' + dateCell2 + '-DATE(1970,1,1))*86400000)';
+    var dayEnd2   = '((' + dateCell2 + '+1-DATE(1970,1,1))*86400000)';
+    sheet.getRange(revStart + d2, 1).setFormula('=' + dateCell2).setNumberFormat('yyyy-mm-dd');
+    sheet.getRange(revStart + d2, 2).setFormula(
+      '=COUNTIFS(orders!H:H,"done",orders!J:J,">=" & ' + dayStart2 + ',orders!J:J,"<" & ' + dayEnd2 + ')'
+    );
+    sheet.getRange(revStart + d2, 3).setFormula(
+      '=SUMPRODUCT((orders!H2:H="done")*(orders!J2:J>=' + dayStart2 + ')*(orders!J2:J<' + dayEnd2 + ')*orders!F2:F*IFERROR(orders!K2:K,0))'
+    ).setNumberFormat('"₱"#,##0');
+  }
+  row = revStart + 30 + 1;
+
+  // ── Section: Revenue per size (all-time, completed orders)
+  sectionHeader_(sheet, row, 'Revenue per size (completed orders, all-time)');
+  row += 1;
+  sheet.getRange(row, 1, 1, 3).setValues([['Size','Trays sold','Revenue']])
+    .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
+  row += 1;
+  // QUERY to aggregate by size for status=done. Then re-label using sizes.
+  sheet.getRange(row, 1).setFormula(
+    '=IFERROR(' +
+      'ARRAYFORMULA({' +
+        'IFERROR(VLOOKUP(QUERY(orders!E2:K,"SELECT E, SUM(F), SUM(F*K) WHERE H = ' + "'done'" + ' GROUP BY E LABEL E " + "''" + ", SUM(F) " + "''" + ", SUM(F*K) " + "''" + '",0),sizes!A:B,2,FALSE),"")' +
+      '},' +
+      'QUERY(orders!E2:K,"SELECT SUM(F), SUM(F*K) WHERE H = ' + "'done'" + ' GROUP BY E LABEL SUM(F) " + "''" + ", SUM(F*K) " + "''" + '",0)),"")'
+  );
+  sheet.getRange(row, 3, 10, 1).setNumberFormat('"₱"#,##0');
+  var revBySizeEnd = row + 9;
+  row = revBySizeEnd + 2;
+
+  // ── Section: Top customers (completed orders, all-time)
+  sectionHeader_(sheet, row, 'Top customers by revenue (completed orders, all-time)');
+  row += 1;
+  sheet.getRange(row, 1, 1, 4).setValues([['Name','Orders','Total trays','Total revenue']])
+    .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
+  row += 1;
+  sheet.getRange(row, 1).setFormula(
+    "=IFERROR(QUERY(orders!B2:K,\"SELECT B, COUNT(F), SUM(F), SUM(F*K) WHERE H = 'done' GROUP BY B ORDER BY SUM(F*K) DESC LIMIT 10 LABEL B '', COUNT(F) '', SUM(F) '', SUM(F*K) ''\",0),\"\")"
+  );
+  sheet.getRange(row, 4, 10, 1).setNumberFormat('"₱"#,##0');
+  var topCustEnd = row + 9;
+  row = topCustEnd + 2;
+
+  // ── Section: Order pipeline status counts
+  sectionHeader_(sheet, row, 'Order pipeline');
+  row += 1;
+  sheet.getRange(row, 1, 1, 3).setValues([['Status','Orders','Trays']])
+    .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
+  row += 1;
+  ['pending','confirmed','done'].forEach(function (status, idx) {
+    sheet.getRange(row + idx, 1).setValue(status);
+    sheet.getRange(row + idx, 2).setFormula('=COUNTIF(orders!H:H,"' + status + '")');
+    sheet.getRange(row + idx, 3).setFormula('=SUMIF(orders!H:H,"' + status + '",orders!F:F)');
+  });
+  row += 4;
+
+  // ── Section: Price history (all events, newest first)
+  sectionHeader_(sheet, row, 'Recent price changes');
+  row += 1;
+  sheet.getRange(row, 1, 1, 5).setValues([['When','Size','Old (₱)','New (₱)','Δ']])
+    .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
+  row += 1;
+  sheet.getRange(row, 1).setFormula(
+    "=IFERROR(QUERY(price_events!B2:E,\"SELECT B, C, D, E ORDER BY B DESC LIMIT 20 LABEL B '', C '', D '', E ''\",0),\"\")"
+  );
+  sheet.getRange(row, 5).setFormula('=ARRAYFORMULA(IF(LEN(D' + row + ':D),D' + row + ':D-C' + row + ':C,""))');
+  sheet.getRange(row, 3, 20, 3).setNumberFormat('"₱"#,##0');
+  row += 22;
+
+  // ── Column widths
+  for (var c = 1; c <= 8; c++) sheet.setColumnWidth(c, c === 1 ? 140 : 120);
+  sheet.setFrozenRows(2);
+  sheet.setHiddenGridlines(true);
+
+  showResult_(
+    'Dashboard built.\n\n' +
+    'Open the "Dashboard" tab. To add charts, click anywhere inside a ' +
+    'table and choose Insert → Chart. Suggested chart types per table:\n\n' +
+    '• Stock by size → column chart\n' +
+    '• Daily restocked vs sold → stacked column\n' +
+    '• Daily revenue → line chart\n' +
+    '• Revenue per size → pie chart\n' +
+    '• Top customers → bar chart\n\n' +
+    'Re-run buildDashboard() any time to refresh layout (data is live).'
+  );
+}
+
+function sectionHeader_(sheet, row, label) {
+  sheet.getRange(row, 1, 1, 8).merge()
+    .setValue(label)
+    .setFontWeight('bold').setFontSize(13).setFontColor('#FFFCF5')
+    .setBackground('#8B5A3C')
+    .setHorizontalAlignment('left').setVerticalAlignment('middle');
+  sheet.setRowHeight(row, 28);
+}
+
 // ── MIGRATION ──────────────────────────────────────────────────
 // Idempotent upgrade path for existing deployments. Safe to re-run.
 // Creates any missing sheets, adds any missing columns, and backfills
