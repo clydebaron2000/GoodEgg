@@ -280,8 +280,8 @@ function submitOrder(data) {
     var currentPrices = readPrices(ss);
     var unitPrice     = Number(currentPrices[o.size]) || 0;
     sheet.appendRow([
-      o.id, o.name, o.contact, o.address,
-      o.size, o.trays, o.notes || '', 'pending', o.time,
+      o.id, asText_(o.name), asText_(o.contact), asText_(o.address),
+      o.size, o.trays, asText_(o.notes || ''), 'pending', o.time,
       o.createdAt || Date.now(),
       unitPrice
     ]);
@@ -379,7 +379,18 @@ function readActivity(ss) {
 
 function logActivity(ss, action) {
   var time  = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MMM d, h:mm a');
-  ss.getSheetByName(SHEET_ACTIVITY).appendRow([action, time]);
+  ss.getSheetByName(SHEET_ACTIVITY).appendRow([asText_(action), time]);
+}
+
+// Escape strings that start with a Sheets formula starter (=, +, -, @) so
+// setValue/appendRow don't interpret them as formulas. Sheets strips the
+// leading apostrophe when reading the cell, so roundtripping is clean.
+// Other values pass through unchanged.
+function asText_(v) {
+  if (v == null) return v;
+  var s = String(v);
+  if (/^[=+\-@]/.test(s)) return "'" + s;
+  return s;
 }
 
 // ── STRUCTURED EVENT LOGS ──────────────────────────────────────
@@ -393,7 +404,7 @@ function logStockEvent(ss, data) {
   var label = Utilities.formatDate(new Date(ts), Session.getScriptTimeZone(), 'MMM d, h:mm a');
   sheet.appendRow([
     ts, label, data.size, data.delta, data.reason,
-    data.before, data.after, data.note || '', 'admin'
+    data.before, data.after, asText_(data.note || ''), 'admin'
   ]);
 }
 
@@ -569,6 +580,7 @@ function migrate() {
   backfillStockEvents_(ss, report);
   migratePinToConfigSheet_(ss, report);
   applyTextFormats_(ss, report);
+  recoverMangledCells_(ss, report);
 
   var body = report.length
     ? report.join('\n')
@@ -728,6 +740,39 @@ function backfillStockEvents_(ss, report) {
     '• Backfilled ' + parsed.length + ' `stock_events` from activity log ' +
     '(createdAt = 0 marks them as historical — they appear under "All time" but not in N-day filters)'
   );
+}
+
+// 7. Walk the freeform string columns and find any cell that's stored as
+// a formula (= it was a string like "+7 trays Medium" that Sheets
+// silently turned into "=+7 trays Medium"). Rewrite each as plain text
+// using the leading-apostrophe escape, which Sheets strips on read.
+// Idempotent: a cell with no formula is skipped.
+function recoverMangledCells_(ss, report) {
+  // sheet name → 1-indexed columns that hold freeform user/system text
+  var targets = [
+    { name: SHEET_ACTIVITY,     cols: [1] },              // action
+    { name: SHEET_ORDERS,       cols: [2, 3, 4, 7] },     // name, contact, address, notes
+    { name: SHEET_STOCK_EVENTS, cols: [8] }               // note
+  ];
+  var fixed = 0;
+  targets.forEach(function (t) {
+    var sheet = ss.getSheetByName(t.name);
+    if (!sheet) return;
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return;
+    t.cols.forEach(function (col) {
+      var range    = sheet.getRange(2, col, lastRow - 1, 1);
+      var formulas = range.getFormulas();
+      for (var i = 0; i < formulas.length; i++) {
+        var f = formulas[i][0];
+        if (!f) continue;                       // empty / plain text → leave alone
+        var original = f.replace(/^=/, '');      // strip the implicit "="
+        sheet.getRange(i + 2, col).setValue("'" + original);
+        fixed++;
+      }
+    });
+  });
+  if (fixed) report.push('• Recovered ' + fixed + ' broken cell' + (fixed === 1 ? '' : 's') + ' that were stored as formulas');
 }
 
 // 6. Force freeform text columns to "Plain text" number format. Without
