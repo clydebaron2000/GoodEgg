@@ -447,7 +447,7 @@
       </div>
 
       <div class="card">
-        <div class="card-title"><i class="ti ti-circle-plus"></i>Add stock</div>
+        <div class="card-title"><i class="ti ti-circle-plus"></i>Collect today's eggs</div>
         <div class="row2">
           <div class="field">
             <label>Size</label>
@@ -464,7 +464,7 @@
         </div>
         <div style="display:flex;gap:10px;">
           <button class="btn btn-primary" id="btn-add-stock" onclick="addStock()"><i class="ti ti-plus"></i>Add trays</button>
-          <button class="btn btn-outline" id="btn-deduct"    onclick="promptDeduct()"><i class="ti ti-minus"></i>Deduct sold</button>
+          <button class="btn btn-outline" id="btn-deduct"    onclick="promptDeduct()"><i class="ti ti-minus"></i>Mark a sale</button>
         </div>
       </div>
     </div>
@@ -543,7 +543,7 @@
   <!-- ─── RESERVE PAGE ─── -->
   <div class="page" id="page-reserve">
     <div class="card">
-      <div class="card-title"><i class="ti ti-clipboard-plus"></i>Place an order</div>
+      <div class="card-title"><i class="ti ti-clipboard-plus"></i>Place your egg order</div>
       <div class="field">
         <label>Your full name</label>
         <input type="text" id="res-name" placeholder="e.g. Maria Santos">
@@ -589,7 +589,7 @@
 <!-- DEDUCT MODAL -->
 <div class="modal-overlay" id="deduct-modal">
   <div class="modal-box">
-    <div class="modal-title">Deduct sold trays</div>
+    <div class="modal-title">Mark a sale</div>
     <div class="row2">
       <div class="field">
         <label>Size</label>
@@ -1487,7 +1487,7 @@ async function submitOrder() {
     pendingOrderId = generateUUID();
     if (res.state) applyState(res.state);
     setSyncStatus('ok');
-    showToast(`Order submitted! We'll contact you at ${contact}`);
+    showToast(`Order placed — we'll have your eggs ready. We'll reach you at ${contact}.`);
     switchTab('inventory');
   } catch (e) {
     restoreSnapshot(snap);
