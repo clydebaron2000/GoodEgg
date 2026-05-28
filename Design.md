@@ -1,8 +1,8 @@
-# EggTrack — Detailed Technical Design
+# The Good Egg — Detailed Technical Design
 
 ## 1. Overview
 
-EggTrack is a mobile-first web app (single HTML file, PWA-installable) for a Philippine poultry farm. It tracks egg inventory by size, manages pricing, and handles customer orders. The backend is Firebase Firestore, hosted in the Singapore region (`asia-southeast1`) to minimize latency from the Philippines (~50–150ms).
+The Good Egg is a mobile-first web app (single HTML file, PWA-installable) for a Philippine poultry farm. It tracks egg inventory by size, manages pricing, and handles customer orders. The backend is Firebase Firestore, hosted in the Singapore region (`asia-southeast1`) to minimize latency from the Philippines (~50–150ms).
 
 **Users:**
 - **Customers** — view stock, view prices, submit orders (no login required)

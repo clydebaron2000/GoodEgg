@@ -1,4 +1,4 @@
-# GoodEgg — EggTrack
+# The Good Egg
 
 A tiny mobile-first web app for a Philippine poultry farm to track egg inventory, prices, and customer orders.
 
@@ -35,16 +35,16 @@ The client polls the Apps Script web app every 30 seconds for fresh state, and w
 
 - [index.html](index.html) — the whole app (UI + client logic)
 - [Code.gs](Code.gs) — Apps Script backend (paste into a Google Sheet's Apps Script editor)
-- [EggTrack_Deployment_Guide.md](EggTrack_Deployment_Guide.md) — step-by-step setup, no coding required
+- [Deployment_Guide.md](Deployment_Guide.md) — step-by-step setup, no coding required
 - [Apps_Script_Sync_Setup.md](Apps_Script_Sync_Setup.md) — wiring up clasp + GitHub Actions so `Code.gs` auto-syncs to Apps Script on push
-- [EggTrack_Design.md](EggTrack_Design.md) — design notes (describes an alternate Firebase backend that was considered but not implemented; the shipped backend is Apps Script + Sheets)
+- [Design.md](Design.md) — design notes (describes an alternate Firebase backend that was considered but not implemented; the shipped backend is Apps Script + Sheets)
 - [.github/workflows](.github/workflows) — auto-deploy to GitHub Pages and Apps Script
 
 ---
 
 ## Deploying your own copy
 
-The short version (full walkthrough in [EggTrack_Deployment_Guide.md](EggTrack_Deployment_Guide.md)):
+The short version (full walkthrough in [Deployment_Guide.md](Deployment_Guide.md)):
 
 1. Create a Google Sheet, open **Extensions → Apps Script**, paste in [Code.gs](Code.gs), and run `setupSpreadsheet` once. (For an existing deployment, run `migrate` instead — it's idempotent and brings the schema/data up to date.)
 2. **Deploy → New deployment → Web app**, set "Execute as: Me" and "Who has access: Anyone". Copy the resulting `/exec` URL.
@@ -59,4 +59,4 @@ The short version (full walkthrough in [EggTrack_Deployment_Guide.md](EggTrack_D
 
 - The PIN can be reset by deleting the `adminPinHash` row in Apps Script → Project Settings → Script Properties. The default `1234` will work again.
 - "Anyone with the URL can read" is intentional — customers need to see stock and prices. Only admin writes require the PIN.
-- The Firestore design in `EggTrack_Design.md` is kept for reference but does not match the running code. Treat `Code.gs` + the Sheet as the source of truth for backend behaviour.
+- The Firestore design in `Design.md` is kept for reference but does not match the running code. Treat `Code.gs` + the Sheet as the source of truth for backend behaviour.

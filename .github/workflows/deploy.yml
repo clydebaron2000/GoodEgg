@@ -42,6 +42,10 @@ jobs:
         run: |
           mkdir -p dist
           cp index.html dist/
+          # Copy any static assets (logos, images, etc.) if present.
+          for f in logo.jpg logo.png icon.png favicon.ico; do
+            [ -f "$f" ] && cp "$f" dist/ || true
+          done
 
       - name: Inject Apps Script URL from secret
         env:
