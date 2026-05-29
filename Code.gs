@@ -1135,9 +1135,29 @@ function showResult_(msg) {
 // Run from the Apps Script editor (Run dropdown → addAdminInteractive)
 // to add a new admin without touching the sheet directly. Prompts for
 // a display name and a 4-digit PIN, hashes the PIN, and writes a row.
-// Requires the sheet to be open in a tab so the UI prompts can attach.
+//
+// REQUIRES a live Sheet UI session — the Google Sheet must be open in a
+// browser tab on the SAME account. If you're hitting
+// "Cannot call SpreadsheetApp.getUi() from this context",
+// either (a) open the Sheet in a tab first then re-run, or
+//        (b) use addAdminQuick() below (no UI required).
 function addAdminInteractive() {
-  var ui = SpreadsheetApp.getUi();
+  var ui;
+  try {
+    ui = SpreadsheetApp.getUi();
+  } catch (e) {
+    // No UI session available — fall back to a Logger-only error so the
+    // operator sees a useful message instead of just the stack trace.
+    Logger.log(
+      'addAdminInteractive needs the Sheet open in a browser tab. ' +
+      'Either open the Sheet (Extensions → Apps Script → run again from there), ' +
+      'or use addAdminQuick() — edit the NAME and PIN constants at the top of ' +
+      'the function and click Run. No UI needed.'
+    );
+    throw new Error(
+      'No UI session. Open the Sheet in a tab and re-run, or use addAdminQuick() instead.'
+    );
+  }
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
   if (!ss.getSheetByName(SHEET_ADMINS)) {
@@ -1177,6 +1197,46 @@ function addAdminInteractive() {
     'They sign in by picking "' + name + '" on the sign-in screen and entering that password. ' +
     'They can change their own password once signed in.'
   );
+}
+
+// ── NO-UI ONBOARDING ──────────────────────────────────────────
+// Same intent as addAdminInteractive(), but doesn't need a Sheet UI
+// session. Edit NAME and PIN to your values, then click ▶ Run.
+// Output goes to View → Executions → Logs.
+//
+// Useful when the editor is open as its own tab (script.google.com)
+// without the Sheet open in another tab — addAdminInteractive() can't
+// attach prompts in that context.
+function addAdminQuick() {
+  // ╔══════════════════════════════════════════════════════════════╗
+  // ║ Edit these two values before running:                        ║
+  var NAME = 'Sara';     // username (anything you want — pick something the team recognises)
+  var PIN  = '4729';     // 4–8 digit numeric password
+  // ╚══════════════════════════════════════════════════════════════╝
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss.getSheetByName(SHEET_ADMINS)) {
+    Logger.log('❌ admins sheet not found. Run migrate() first, then try again.');
+    return;
+  }
+  if (!NAME || !NAME.trim()) {
+    Logger.log('❌ NAME is empty. Edit the function body and set NAME to the new admin\'s username.');
+    return;
+  }
+  if (!/^\d{4,8}$/.test(PIN)) {
+    Logger.log('❌ PIN "' + PIN + '" is invalid — must be 4–8 digits, numeric only (0–9).');
+    return;
+  }
+
+  var result = createAdmin_(ss, NAME.trim(), sha256Hex(PIN));
+  if (result.error) {
+    Logger.log('❌ Could not add admin: ' + result.error);
+    return;
+  }
+  logActivity(ss, 'Added admin: ' + NAME + ' (via Apps Script editor)', 'system');
+  Logger.log('✅ Added admin "' + NAME + '" with password ' + PIN);
+  Logger.log('They sign in by picking "' + NAME + '" on the sign-in screen and entering ' + PIN + '.');
+  Logger.log('They can change their own password once signed in.');
 }
 
 // Quick utility to list current admins from the editor — handy for
