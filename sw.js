@@ -2,7 +2,7 @@
 // Version is replaced at deploy time by the build workflow with the
 // commit SHA. A new SHA produces a new cache name, which triggers the
 // browser to install this script as a fresh service worker.
-const VERSION    = '63ea32d92d58428390ddbf1a64f19ba7a22e367a';
+const VERSION    = '07fac659f34ecdae9edb1c334e35177ce2274675';
 const CACHE_NAME = 'good-egg-' + VERSION;
 const PRECACHE   = ['./', './index.html', './logo.jpg'];
 

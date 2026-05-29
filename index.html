@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="The Good Egg">
 <meta name="theme-color" content="#6B4226">
-<meta name="build-version" content="63ea32d92d58428390ddbf1a64f19ba7a22e367a">
+<meta name="build-version" content="07fac659f34ecdae9edb1c334e35177ce2274675">
 <title>The Good Egg – Farm Fresh Eggs</title>
 <meta name="description" content="Tracking your farm fresh eggs — inventory, pricing, and orders for The Good Egg farm.">
 <link rel="icon" type="image/jpeg" href="logo.jpg">
@@ -883,6 +883,12 @@ function refreshSizeConstants() {
   sorted.forEach(s => { SIZE_LABELS[s.key] = s.label; });
 }
 
+// Formatted size mention for activity log messages — mirrors the
+// server's sizeMention_(). Returns: size "Extra Large"
+function sizeMention(key) {
+  return `size "${SIZE_LABELS[key] || key}"`;
+}
+
 // Repopulate every size dropdown from the current SIZE_ORDER. Preserves
 // the user's selected value when possible so a poll in the background
 // doesn't reset the form they're filling out.
@@ -941,7 +947,7 @@ function describeDeletedOrder(o) {
   const parts = [
     `Deleted [${o.status || 'unknown'}] order:`,
     o.name + (loc ? ` (${loc})` : ''),
-    `— ${trays} tray${trays === 1 ? '' : 's'} ${SIZE_LABELS[o.size] || o.size} @ ₱${unit} = ₱${total}`,
+    `— ${trays} tray${trays === 1 ? '' : 's'} ${sizeMention(o.size)} @ ₱${unit} = ₱${total}`,
     `— placed ${placed}`
   ];
   if (o.notes) parts.push(`— notes: "${o.notes}"`);
@@ -1408,7 +1414,7 @@ async function addStock() {
   // Optimistic: apply locally now so the UI feels instant.
   const snap = snapshot();
   state.stock[size] = (state.stock[size] || 0) + trays;
-  pushActivity(`+${trays} tray${trays>1?'s':''} ${SIZE_LABELS[size]}${note ? ' — ' + note : ''}`);
+  pushActivity(`+${trays} tray${trays>1?'s':''} ${sizeMention(size)}${note ? ' — ' + note : ''}`);
   document.getElementById('add-trays').value = '';
   document.getElementById('add-note').value  = '';
   renderAll();
@@ -1448,7 +1454,7 @@ async function deductStock() {
   // Optimistic
   const snap = snapshot();
   state.stock[size] -= trays;
-  pushActivity(`-${trays} tray${trays>1?'s':''} ${SIZE_LABELS[size]} (sold)`);
+  pushActivity(`-${trays} tray${trays>1?'s':''} ${sizeMention(size)} (sold)`);
   closeModal('deduct-modal');
   renderAll();
 
@@ -1491,7 +1497,7 @@ async function savePrices() {
     if (prices[k] == null) return;
     const oldP = Number(state.prices[k]) || 0;
     const newP = Number(prices[k]) || 0;
-    if (oldP !== newP) changes.push(`${SIZE_LABELS[k]} ₱${oldP} → ₱${newP}`);
+    if (oldP !== newP) changes.push(`${sizeMention(k)} ₱${oldP} → ₱${newP}`);
   });
 
   // Optimistic
@@ -1783,7 +1789,7 @@ async function submitOrder() {
   // so the customer can retry without re-typing if the network drops.
   const snap = snapshot();
   state.orders.push(order);
-  pushActivity(`Order: ${name} — ${trays} tray${trays>1?'s':''} ${SIZE_LABELS[size]}`);
+  pushActivity(`Order: ${name} — ${trays} tray${trays>1?'s':''} ${sizeMention(size)}`);
   renderAll();
 
   const btn = document.getElementById('btn-submit-order');
