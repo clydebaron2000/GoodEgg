@@ -428,10 +428,9 @@ function addStock(data) {
         break;
       }
     }
-    var label = sizeLabel(data.size);
     var note  = data.note ? ' — ' + data.note : '';
     var actor = data._admin && data._admin.name;
-    logActivity(ss, '+' + trays + ' tray' + plural(trays) + ' ' + label + note, actor);
+    logActivity(ss, '+' + trays + ' tray' + plural(trays) + ' ' + sizeMention_(data.size) + note, actor);
     logStockEvent(ss, { size: data.size, delta: trays, reason: 'restock', before: before, after: after, note: data.note || '' }, actor);
     return { success: true, state: getState() };
   } finally {
@@ -460,7 +459,7 @@ function deductStock(data) {
       }
     }
     var actor = data._admin && data._admin.name;
-    logActivity(ss, '-' + trays + ' tray' + plural(trays) + ' ' + sizeLabel(data.size) + ' (sold)', actor);
+    logActivity(ss, '-' + trays + ' tray' + plural(trays) + ' ' + sizeMention_(data.size) + ' (sold)', actor);
     logStockEvent(ss, { size: data.size, delta: -trays, reason: 'sold', before: before, after: after, note: data.note || '' }, actor);
     return { success: true, state: getState() };
   } finally {
@@ -490,7 +489,7 @@ function savePrices(data) {
       if (oldPrice !== newPrice) {
         sheet.getRange(i + 1, 2).setValue(newPrice);
         logPriceEvent(ss, { size: size, oldPrice: oldPrice, newPrice: newPrice }, data._admin && data._admin.name);
-        changes.push(sizeLabel(size) + ' ₱' + oldPrice + ' → ₱' + newPrice);
+        changes.push(sizeMention_(size) + ' ₱' + oldPrice + ' → ₱' + newPrice);
       }
     }
   }
@@ -552,7 +551,7 @@ function submitOrder(data) {
       createdAt,
       unitPrice
     ]);
-    logActivity(ss, 'Order: ' + o.name + ' — ' + o.trays + ' tray' + plural(o.trays) + ' ' + sizeLabel(o.size), 'customer');
+    logActivity(ss, 'Order: ' + o.name + ' — ' + o.trays + ' tray' + plural(o.trays) + ' ' + sizeMention_(o.size), 'customer');
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -625,7 +624,7 @@ function describeDeletedOrder_(o) {
   var parts = [
     'Deleted [' + (o.status || 'unknown') + '] order:',
     o.name + (loc ? ' (' + loc + ')' : ''),
-    '— ' + trays + ' tray' + plural(trays) + ' ' + sizeLabel(o.size) +
+    '— ' + trays + ' tray' + plural(trays) + ' ' + sizeMention_(o.size) +
       ' @ ₱' + unit + ' = ₱' + total,
     '— placed ' + (o.time || 'unknown time')
   ];
@@ -759,8 +758,29 @@ function sha256Hex(input) {
   }).join('');
 }
 
+// Display label for a size key. Source of truth is the `sizes` sheet —
+// custom sizes added via addSize() get the label the operator typed
+// instead of the raw key. Falls back to the hardcoded SIZE_LABELS map
+// (covers pre-migration sheets) and finally to the raw key.
 function sizeLabel(size) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SIZES);
+    if (sheet) {
+      var rows = sheet.getDataRange().getValues();
+      for (var i = 1; i < rows.length; i++) {
+        if (rows[i][0] === size && rows[i][1]) return String(rows[i][1]);
+      }
+    }
+  } catch (e) { /* fall through to defaults */ }
   return SIZE_LABELS[size] || size;
+}
+
+// Formatted size mention for activity log messages.
+// Returns: size "Extra Large"
+// Quoted so operators can scan log lines and tell where the size name
+// starts and ends — useful for sizes whose labels contain spaces.
+function sizeMention_(size) {
+  return 'size "' + sizeLabel(size) + '"';
 }
 
 function plural(n) {
