@@ -42,6 +42,7 @@ jobs:
         run: |
           mkdir -p dist
           cp index.html dist/
+          [ -f sw.js ] && cp sw.js dist/ || true
           # Copy any static assets (logos, images, etc.) if present.
           for f in logo.jpg logo.png icon.png favicon.ico; do
             [ -f "$f" ] && cp "$f" dist/ || true
@@ -52,6 +53,14 @@ jobs:
           SCRIPT_URL: ${{ secrets.SCRIPT_URL }}
         run: |
           sed -i "0,/YOUR_APPS_SCRIPT_URL_HERE/ s|YOUR_APPS_SCRIPT_URL_HERE|$SCRIPT_URL|" dist/index.html
+
+      - name: Inject build version (commit SHA) into index + sw
+        run: |
+          SHA="${{ github.sha }}"
+          sed -i "s|__BUILD_VERSION__|$SHA|g" dist/index.html
+          if [ -f dist/sw.js ]; then
+            sed -i "s|__BUILD_VERSION__|$SHA|g" dist/sw.js
+          fi
 
       - name: Determine destination directory
         id: dest
