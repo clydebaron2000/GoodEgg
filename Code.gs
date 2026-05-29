@@ -11,9 +11,10 @@ var SHEET_ORDERS       = 'orders';
 var SHEET_ACTIVITY     = 'activity';
 var SHEET_CONFIG       = 'config';
 var SHEET_SIZES        = 'sizes';
+var SHEET_ADMINS       = 'admins';
 var SHEET_STOCK_EVENTS = 'stock_events';
 var SHEET_PRICE_EVENTS = 'price_events';
-var PIN_KEY            = 'adminPinHash';
+var PIN_KEY            = 'adminPinHash';  // legacy single-PIN config row, kept for migration
 var EVENT_PAGE_SIZE    = 500;  // cap events returned by getState (most recent first)
 
 var SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large', xl: 'XL', jumbo: 'Jumbo' };
@@ -35,14 +36,24 @@ function doPost(e) {
     var data = JSON.parse(e.postData.contents);
     var action = data.action;
 
-    // Admin actions require valid PIN hash
+    // Admin actions: verify (adminId, pinHash) against the admins sheet.
+    // On success we stamp data._admin with the resolved admin so downstream
+    // handlers can attribute activity / event log entries to a real name.
+    //
+    // Backwards-compat: an OLDER client (pre-multi-admin) sends only
+    // {pinHash}. We accept that too — match against any active admin's
+    // pinHash, first hit wins. Lets the production deploy keep working
+    // while feature branches share the same Apps Script backend.
     var adminActions = ['addStock', 'deductStock', 'savePrices',
                         'updateOrderStatus', 'deleteOrder', 'changePIN',
-                        'addSize', 'deleteSize'];
+                        'addSize', 'deleteSize',
+                        'addAdmin', 'deleteAdmin', 'renameAdmin'];
     if (adminActions.indexOf(action) !== -1) {
-      if (!verifyPIN(data.pinHash)) {
-        return jsonResponse({ error: 'Invalid PIN', code: 'UNAUTHORIZED' });
-      }
+      var admin = verifyAdminLogin_(data.adminId, data.pinHash);
+      if (!admin) admin = verifyLegacyLogin_(data.pinHash);
+      if (!admin) return jsonResponse({ error: 'Invalid login', code: 'UNAUTHORIZED' });
+      data._admin = admin;            // { id, name }
+      data.actorName = admin.name;     // convenience for legacy callsites
     }
 
     switch (action) {
@@ -56,6 +67,9 @@ function doPost(e) {
       case 'changePIN':         return jsonResponse(changePIN(data));
       case 'addSize':           return jsonResponse(addSize(data));
       case 'deleteSize':        return jsonResponse(deleteSize(data));
+      case 'addAdmin':          return jsonResponse(addAdmin(data));
+      case 'deleteAdmin':       return jsonResponse(deleteAdmin(data));
+      case 'renameAdmin':       return jsonResponse(renameAdmin(data));
       default:                  return jsonResponse({ error: 'Unknown action' });
     }
   } catch (err) {
@@ -69,6 +83,7 @@ function doPost(e) {
 function getState() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   return {
+    admins:       readAdminsPublic(ss),   // safe-to-expose subset (no pinHash)
     sizes:        readSizes(ss),
     stock:        readStock(ss),
     prices:       readPrices(ss),
@@ -120,7 +135,7 @@ function addSize(data) {
     ss.getSheetByName(SHEET_STOCK ).appendRow([key, 0]);
     ss.getSheetByName(SHEET_PRICES).appendRow([key, 0]);
 
-    logActivity(ss, 'Added egg size: ' + label + ' (' + key + ')');
+    logActivity(ss, 'Added egg size: ' + label + ' (' + key + ')', data._admin && data._admin.name);
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -148,7 +163,7 @@ function deleteSize(data) {
     var msg = 'Deleted egg size: ' + label + ' (' + key + ')';
     if (trays > 0) msg += ' — erased ' + trays + ' tray' + plural(trays) + ' of stock';
     if (price > 0) msg += (trays > 0 ? ', priced' : ' — priced') + ' at ₱' + price + '/tray';
-    logActivity(ss, msg);
+    logActivity(ss, msg, data._admin && data._admin.name);
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -171,32 +186,185 @@ function deleteRowByKey_(sheet, key, valueCol) {
   return 0;
 }
 
-// ── PIN ────────────────────────────────────────────────────────
-
-function verifyPIN(submittedHash) {
-  if (!submittedHash) return false;
-  var ss     = SpreadsheetApp.getActiveSpreadsheet();
-  var stored = readConfig(ss, PIN_KEY);
-  if (!stored) {
-    // First run / migration: pull from legacy Script Properties if present,
-    // otherwise default to PIN 1234. Persist the result to the config sheet.
-    var legacy = PropertiesService.getScriptProperties().getProperty(PIN_KEY);
-    stored = legacy || sha256Hex('1234');
-    writeConfig(ss, PIN_KEY, stored);
+// ── ADMINS ─────────────────────────────────────────────────────
+// Authoritative reader: returns every row including pinHash. Used only by
+// the auth gate and write helpers.
+function readAdmins(ss) {
+  var sheet = ss.getSheetByName(SHEET_ADMINS);
+  if (!sheet) return [];
+  var rows = sheet.getDataRange().getValues();
+  var out  = [];
+  for (var i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    out.push({
+      id:        String(rows[i][0]),
+      name:      String(rows[i][1] || rows[i][0]),
+      pinHash:   String(rows[i][2] || ''),
+      createdAt: Number(rows[i][3]) || 0,
+      active:    rows[i][4] === false ? false : true
+    });
   }
-  return submittedHash === stored;
+  return out;
 }
 
-function doVerifyPIN(data) {
-  return { success: verifyPIN(data.pinHash) };
+// Public list: only what the client should ever see (no pinHash, only active).
+function readAdminsPublic(ss) {
+  return readAdmins(ss)
+    .filter(function (a) { return a.active; })
+    .map(function (a) { return { id: a.id, name: a.name, createdAt: a.createdAt }; });
 }
 
-function changePIN(data) {
-  if (!data.newPinHash) return { error: 'No new PIN hash provided' };
+// Verify (adminId, pinHash) and return { id, name } if valid, else null.
+function verifyAdminLogin_(adminId, pinHash) {
+  if (!adminId || !pinHash) return null;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  writeConfig(ss, PIN_KEY, data.newPinHash);
-  logActivity(ss, 'Admin PIN changed');
-  return { success: true };
+  var admin = readAdmins(ss).find(function (a) {
+    return a.active && a.id === adminId;
+  });
+  if (!admin) return null;
+  if (admin.pinHash !== pinHash) return null;
+  return { id: admin.id, name: admin.name };
+}
+
+// Legacy login (pre-multi-admin clients): no adminId, just a pinHash.
+// We accept it if it matches ANY active admin's stored pinHash. The first
+// match wins for attribution. Lets the production deploy keep working
+// while a feature branch shares the same Apps Script backend.
+function verifyLegacyLogin_(pinHash) {
+  if (!pinHash) return null;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var admin = readAdmins(ss).find(function (a) {
+    return a.active && a.pinHash === pinHash;
+  });
+  if (admin) return { id: admin.id, name: admin.name };
+  // Older deployments may still only have the legacy config row before
+  // migrate() has been re-run. Accept that too.
+  var legacy = readConfig(ss, PIN_KEY);
+  if (legacy && legacy === pinHash) return { id: '_legacy', name: 'Admin' };
+  return null;
+}
+
+// Public endpoint called from the PIN screen. New clients send
+// (adminId, pinHash); legacy clients send only pinHash. Returns
+// { success: true, admin } on the new path, { success: true } on the
+// legacy path so old clients still light up admin mode.
+function doVerifyPIN(data) {
+  var admin = verifyAdminLogin_(data.adminId, data.pinHash);
+  if (admin) return { success: true, admin: admin };
+  admin = verifyLegacyLogin_(data.pinHash);
+  if (admin) return { success: true, admin: admin };  // new client field is harmless to old client
+  return { success: false };
+}
+
+// Insert a new admin row. Used by both addAdmin (API) and addAdminInteractive
+// (editor helper). Returns { success, admin } or { error }.
+function createAdmin_(ss, name, pinHash) {
+  name = String(name || '').trim();
+  if (!name) return { error: 'Name is required' };
+  if (!/^[0-9a-f]{64}$/i.test(String(pinHash || ''))) {
+    return { error: 'PIN hash must be a 64-char hex string' };
+  }
+  var existing = readAdmins(ss);
+  var clash = existing.some(function (a) {
+    return a.active && a.name.toLowerCase() === name.toLowerCase();
+  });
+  if (clash) return { error: 'An admin named "' + name + '" already exists' };
+
+  var sheet = ss.getSheetByName(SHEET_ADMINS);
+  if (!sheet) return { error: 'admins sheet not found — run migrate()' };
+  var id = Utilities.getUuid();
+  sheet.appendRow([id, asText_(name), String(pinHash), Date.now(), true]);
+  return { success: true, admin: { id: id, name: name } };
+}
+
+function addAdmin(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var res = createAdmin_(ss, data.name, data.newPinHash);
+  if (res.error) return res;
+  logActivity(ss, 'Added admin: ' + res.admin.name, data._admin.name);
+  return { success: true, admin: res.admin, state: getState() };
+}
+
+function deleteAdmin(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var targetId = String(data.targetId || '');
+  if (!targetId) return { error: 'targetId required' };
+
+  var admins = readAdmins(ss);
+  var target = admins.find(function (a) { return a.id === targetId; });
+  if (!target) return { error: 'Admin not found' };
+
+  // Safety net: never let the active admin set drop to zero.
+  var activeOthers = admins.filter(function (a) { return a.active && a.id !== targetId; });
+  if (target.active && activeOthers.length === 0) {
+    return { error: 'Cannot remove the last active admin' };
+  }
+
+  var sheet = ss.getSheetByName(SHEET_ADMINS);
+  var rows  = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (rows[i][0] === targetId) {
+      sheet.deleteRow(i + 1);
+      break;
+    }
+  }
+  logActivity(ss, 'Removed admin: ' + target.name, data._admin.name);
+  return { success: true, state: getState() };
+}
+
+function renameAdmin(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var targetId = String(data.targetId || '');
+  var newName  = String(data.newName || '').trim();
+  if (!targetId || !newName) return { error: 'targetId and newName required' };
+
+  var admins = readAdmins(ss);
+  var clash = admins.some(function (a) {
+    return a.active && a.id !== targetId && a.name.toLowerCase() === newName.toLowerCase();
+  });
+  if (clash) return { error: 'An admin named "' + newName + '" already exists' };
+
+  var sheet = ss.getSheetByName(SHEET_ADMINS);
+  var rows  = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (rows[i][0] === targetId) {
+      var oldName = rows[i][1];
+      sheet.getRange(i + 1, 2).setValue(asText_(newName));
+      logActivity(ss, 'Renamed admin: ' + oldName + ' → ' + newName, data._admin.name);
+      return { success: true, state: getState() };
+    }
+  }
+  return { error: 'Admin not found' };
+}
+
+// Changes the LOGGED-IN admin's own password. data._admin came from the
+// auth gate in doPost.
+//
+// Two paths:
+//   - Multi-admin login: update the admin's row in the admins sheet.
+//   - Legacy login (id = '_legacy'): the caller doesn't yet know which
+//     admin row they are, so we update the legacy config.adminPinHash.
+function changePIN(data) {
+  if (!data.newPinHash) return { error: 'No new password hash provided' };
+  if (!/^[0-9a-f]{64}$/i.test(data.newPinHash)) return { error: 'Invalid password hash' };
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (data._admin.id === '_legacy') {
+    writeConfig(ss, PIN_KEY, data.newPinHash);
+    logActivity(ss, 'Legacy admin password changed', data._admin.name);
+    return { success: true };
+  }
+
+  var sheet = ss.getSheetByName(SHEET_ADMINS);
+  var rows  = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (rows[i][0] === data._admin.id) {
+      sheet.getRange(i + 1, 3).setValue(data.newPinHash);
+      logActivity(ss, data._admin.name + ' changed their password', data._admin.name);
+      return { success: true };
+    }
+  }
+  return { error: 'Admin record not found' };
 }
 
 // ── CONFIG (key/value sheet) ───────────────────────────────────
@@ -262,8 +430,9 @@ function addStock(data) {
     }
     var label = sizeLabel(data.size);
     var note  = data.note ? ' — ' + data.note : '';
-    logActivity(ss, '+' + trays + ' tray' + plural(trays) + ' ' + label + note);
-    logStockEvent(ss, { size: data.size, delta: trays, reason: 'restock', before: before, after: after, note: data.note || '' });
+    var actor = data._admin && data._admin.name;
+    logActivity(ss, '+' + trays + ' tray' + plural(trays) + ' ' + label + note, actor);
+    logStockEvent(ss, { size: data.size, delta: trays, reason: 'restock', before: before, after: after, note: data.note || '' }, actor);
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -290,8 +459,9 @@ function deductStock(data) {
         break;
       }
     }
-    logActivity(ss, '-' + trays + ' tray' + plural(trays) + ' ' + sizeLabel(data.size) + ' (sold)');
-    logStockEvent(ss, { size: data.size, delta: -trays, reason: 'sold', before: before, after: after, note: data.note || '' });
+    var actor = data._admin && data._admin.name;
+    logActivity(ss, '-' + trays + ' tray' + plural(trays) + ' ' + sizeLabel(data.size) + ' (sold)', actor);
+    logStockEvent(ss, { size: data.size, delta: -trays, reason: 'sold', before: before, after: after, note: data.note || '' }, actor);
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -319,14 +489,14 @@ function savePrices(data) {
       var newPrice = Number(data.prices[size]) || 0;
       if (oldPrice !== newPrice) {
         sheet.getRange(i + 1, 2).setValue(newPrice);
-        logPriceEvent(ss, { size: size, oldPrice: oldPrice, newPrice: newPrice });
+        logPriceEvent(ss, { size: size, oldPrice: oldPrice, newPrice: newPrice }, data._admin && data._admin.name);
         changes.push(sizeLabel(size) + ' ₱' + oldPrice + ' → ₱' + newPrice);
       }
     }
   }
   if (changes.length > 0) {
     var prefix = changes.length === 1 ? 'Price updated: ' : 'Prices updated: ';
-    logActivity(ss, prefix + changes.join(', '));
+    logActivity(ss, prefix + changes.join(', '), data._admin && data._admin.name);
   }
   return { success: true, state: getState() };
 }
@@ -382,7 +552,7 @@ function submitOrder(data) {
       createdAt,
       unitPrice
     ]);
-    logActivity(ss, 'Order: ' + o.name + ' — ' + o.trays + ' tray' + plural(o.trays) + ' ' + sizeLabel(o.size));
+    logActivity(ss, 'Order: ' + o.name + ' — ' + o.trays + ' tray' + plural(o.trays) + ' ' + sizeLabel(o.size), 'customer');
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -399,7 +569,7 @@ function updateOrderStatus(data) {
     for (var i = 1; i < rows.length; i++) {
       if (rows[i][0] === data.orderId) {
         sheet.getRange(i + 1, 8).setValue(data.status);
-        logActivity(ss, 'Order ' + data.status + ': ' + rows[i][1]);
+        logActivity(ss, 'Order ' + data.status + ': ' + rows[i][1], data._admin && data._admin.name);
         return { success: true, state: getState() };
       }
     }
@@ -434,7 +604,7 @@ function deleteOrder(data) {
           unitPrice: rows[i][10]
         };
         sheet.deleteRow(i + 1);
-        logActivity(ss, describeDeletedOrder_(deleted));
+        logActivity(ss, describeDeletedOrder_(deleted), data._admin && data._admin.name);
         return { success: true, state: getState() };
       }
     }
@@ -471,16 +641,22 @@ function readActivity(ss) {
   for (var i = 1; i < rows.length; i++) {
     log.push({
       action:    rows[i][0],
-      time:      rows[i][1],          // legacy pre-formatted string (script TZ)
-      createdAt: rows[i][2] || null   // epoch ms; null for pre-migration rows
+      time:      rows[i][1],            // legacy pre-formatted string (script TZ)
+      createdAt: rows[i][2] || null,    // epoch ms; null for pre-migration rows
+      actor:     rows[i][3] || null     // admin name; null for pre-migration rows
     });
   }
   return log;
 }
 
-function logActivity(ss, action) {
+// Append a row to the freeform activity log. `actor` defaults to 'system'
+// when called from non-admin code paths (migrate, setupSpreadsheet) so the
+// row is still attributable.
+function logActivity(ss, action, actor) {
   var ts = Date.now();
-  ss.getSheetByName(SHEET_ACTIVITY).appendRow([asText_(action), utcLabel_(ts), ts]);
+  ss.getSheetByName(SHEET_ACTIVITY).appendRow([
+    asText_(action), utcLabel_(ts), ts, asText_(actor || 'system')
+  ]);
 }
 
 // All sheet "time" strings are written in UTC so anyone opening the Sheet
@@ -505,22 +681,22 @@ function asText_(v) {
 // These are append-only tables intended for dashboards/analytics.
 // The freeform `activity` sheet stays for human-readable display.
 
-function logStockEvent(ss, data) {
+function logStockEvent(ss, data, actor) {
   var sheet = ss.getSheetByName(SHEET_STOCK_EVENTS);
   if (!sheet) return;  // run setupSpreadsheet to create
   var ts = Date.now();
   sheet.appendRow([
     ts, utcLabel_(ts), data.size, data.delta, data.reason,
-    data.before, data.after, asText_(data.note || ''), 'admin'
+    data.before, data.after, asText_(data.note || ''), asText_(actor || 'admin')
   ]);
 }
 
-function logPriceEvent(ss, data) {
+function logPriceEvent(ss, data, actor) {
   var sheet = ss.getSheetByName(SHEET_PRICE_EVENTS);
   if (!sheet) return;
   var ts = Date.now();
   sheet.appendRow([
-    ts, utcLabel_(ts), data.size, data.oldPrice, data.newPrice, 'admin'
+    ts, utcLabel_(ts), data.size, data.oldPrice, data.newPrice, asText_(actor || 'admin')
   ]);
 }
 
@@ -632,6 +808,15 @@ function setupSpreadsheet() {
     [['small','Small',1],['medium','Medium',2],['large','Large',3],['xl','XL',4],['jumbo','Jumbo',5]]
       .forEach(function (r) { sizes.appendRow(r); });
     sizes.getRange('A1:C1').setFontWeight('bold');
+  }
+
+  // Admins (id, name, pinHash, createdAt, active). Seeded with a default
+  // admin (PIN 1234) so a fresh install can still log in.
+  var admins = getOrCreate(ss, SHEET_ADMINS);
+  if (admins.getLastRow() === 0) {
+    admins.appendRow(['id','name','pinHash','createdAt','active']);
+    admins.appendRow([Utilities.getUuid(), asText_('Admin'), sha256Hex('1234'), Date.now(), true]);
+    admins.getRange('A1:E1').setFontWeight('bold');
   }
 
   // Stock events (structured restock/sale log)
@@ -918,6 +1103,7 @@ function migrate() {
   upgradeActivitySchema_(ss, report);
   upgradeOrdersSchema_(ss, report);
   seedSizesSheet_(ss, report);
+  seedInitialAdmin_(ss, report);
   backfillUnitPrice_(ss, report);
   backfillStockEvents_(ss, report);
   migratePinToConfigSheet_(ss, report);
@@ -943,6 +1129,70 @@ function showResult_(msg) {
   } catch (e) {
     // No UI session; Logger output is the record. View → Executions.
   }
+}
+
+// ── ONBOARDING ─────────────────────────────────────────────────
+// Run from the Apps Script editor (Run dropdown → addAdminInteractive)
+// to add a new admin without touching the sheet directly. Prompts for
+// a display name and a 4-digit PIN, hashes the PIN, and writes a row.
+// Requires the sheet to be open in a tab so the UI prompts can attach.
+function addAdminInteractive() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (!ss.getSheetByName(SHEET_ADMINS)) {
+    ui.alert('admins sheet not found. Run migrate() first, then try again.');
+    return;
+  }
+
+  var nameResp = ui.prompt(
+    'Add an admin',
+    'Username for the new admin (anything you want — pick something the team will recognize, e.g. "sara"):',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (nameResp.getSelectedButton() !== ui.Button.OK) return;
+  var name = nameResp.getResponseText().trim();
+  if (!name) { ui.alert('Username is required.'); return; }
+
+  var pinResp = ui.prompt(
+    'Add an admin',
+    'Choose a numeric password for ' + name + ' (4–8 digits):',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (pinResp.getSelectedButton() !== ui.Button.OK) return;
+  var pin = pinResp.getResponseText().trim();
+  if (!/^\d{4,8}$/.test(pin)) {
+    ui.alert('Password must be 4–8 digits, numeric only (0–9).');
+    return;
+  }
+
+  var result = createAdmin_(ss, name, sha256Hex(pin));
+  if (result.error) {
+    ui.alert('Could not add admin: ' + result.error);
+    return;
+  }
+  logActivity(ss, 'Added admin: ' + name + ' (via Apps Script editor)', 'system');
+  ui.alert(
+    '✅ Added "' + name + '" with password ' + pin + '.\n\n' +
+    'They sign in by picking "' + name + '" on the sign-in screen and entering that password. ' +
+    'They can change their own password once signed in.'
+  );
+}
+
+// Quick utility to list current admins from the editor — handy for
+// "who has access?" audits without opening the sheet tab.
+function listAdmins() {
+  var admins = readAdmins(SpreadsheetApp.getActiveSpreadsheet());
+  if (!admins.length) {
+    showResult_('No admins configured. Run migrate() or addAdminInteractive().');
+    return;
+  }
+  var lines = admins.map(function (a) {
+    return (a.active ? '✅' : '⊝') + ' ' + a.name +
+           '  (id: ' + a.id.slice(0, 8) + '…, created ' +
+           Utilities.formatDate(new Date(a.createdAt || 0), 'UTC', 'yyyy-MM-dd') + ')';
+  });
+  showResult_('Current admins:\n\n' + lines.join('\n'));
 }
 
 // 1. Make sure every sheet exists with its current header.
@@ -986,6 +1236,12 @@ function ensureAllSheets_(ss, report) {
     sz.getRange('A1:C1').setFontWeight('bold');
     report.push('• Created `sizes` sheet');
   }
+  if (!ss.getSheetByName(SHEET_ADMINS)) {
+    var ad = ss.insertSheet(SHEET_ADMINS);
+    ad.appendRow(['id','name','pinHash','createdAt','active']);
+    ad.getRange('A1:E1').setFontWeight('bold');
+    report.push('• Created `admins` sheet');
+  }
   if (!ss.getSheetByName(SHEET_STOCK_EVENTS)) {
     var se = ss.insertSheet(SHEET_STOCK_EVENTS);
     se.appendRow(['createdAt','time','size','delta','reason','before','after','note','actor']);
@@ -1000,16 +1256,36 @@ function ensureAllSheets_(ss, report) {
   }
 }
 
-// 2a. Add createdAt (epoch ms) to an older activity sheet.
+// 2a. Add createdAt + actor to an older activity sheet.
 function upgradeActivitySchema_(ss, report) {
   var act = ss.getSheetByName(SHEET_ACTIVITY);
   if (!act) return;
-  var width   = Math.max(act.getLastColumn(), 3);
+  var width   = Math.max(act.getLastColumn(), 4);
   var headers = act.getRange(1, 1, 1, width).getValues()[0];
   if (headers[2] !== 'createdAt') {
     act.getRange(1, 3).setValue('createdAt').setFontWeight('bold');
     report.push('• Added `activity.createdAt` column (old rows stay client-formatted from their `time` string until new entries land)');
   }
+  if (headers[3] !== 'actor') {
+    act.getRange(1, 4).setValue('actor').setFontWeight('bold');
+    report.push('• Added `activity.actor` column (old rows show no attribution; new rows record which admin or "customer")');
+  }
+}
+
+// 2c. Promote the legacy single PIN (config.adminPinHash or a fresh
+// default) into the admins sheet as a row named "Admin". Idempotent —
+// only runs if the admins sheet has no data rows yet.
+function seedInitialAdmin_(ss, report) {
+  var sheet = ss.getSheetByName(SHEET_ADMINS);
+  if (!sheet) return;
+  if (sheet.getLastRow() > 1) return;  // already has admins
+
+  var legacyHash = readConfig(ss, PIN_KEY);
+  var hash       = legacyHash || sha256Hex('1234');
+  sheet.appendRow([Utilities.getUuid(), asText_('Admin'), hash, Date.now(), true]);
+  report.push(legacyHash
+    ? '• Promoted existing PIN to admins sheet as "Admin" — same PIN, you can now rename them and add more admins'
+    : '• Seeded default admin "Admin" with PIN 1234 — change it after first login');
 }
 
 // 2. Add missing columns to an older `orders` sheet (createdAt, unitPrice).
@@ -1184,7 +1460,8 @@ function applyTextFormats_(ss, report) {
     { sheet: SHEET_STOCK_EVENTS,  ranges: ['B:B', 'E:E', 'H:H', 'I:I'] },  // time, reason, note, actor
     { sheet: SHEET_PRICE_EVENTS,  ranges: ['B:B', 'F:F'] },                // time, actor
     { sheet: SHEET_CONFIG,        ranges: ['B:B'] },                       // value (PIN hash etc. — pure strings)
-    { sheet: SHEET_SIZES,         ranges: ['B:B'] }                        // label (freeform)
+    { sheet: SHEET_SIZES,         ranges: ['B:B'] },                       // label (freeform)
+    { sheet: SHEET_ADMINS,        ranges: ['B:B'] }                        // name (freeform)
   ];
   var touched = 0;
   textCols.forEach(function (entry) {
@@ -1199,8 +1476,10 @@ function applyTextFormats_(ss, report) {
 }
 
 // 5. Move admin PIN out of Script Properties into the config sheet.
-// Code already auto-migrates on first verifyPIN call, but doing it here
-// makes the move explicit and visible in the report.
+// Historically the legacy single-PIN flow read from config.adminPinHash.
+// Multi-admin auth no longer reads it, but we preserve the row for one
+// more migrate cycle so seedInitialAdmin_ can promote it to the admins
+// sheet on first multi-admin migration.
 function migratePinToConfigSheet_(ss, report) {
   if (readConfig(ss, PIN_KEY)) return;  // already there
   var legacy = PropertiesService.getScriptProperties().getProperty(PIN_KEY);
