@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="The Good Egg">
 <meta name="theme-color" content="#6B4226">
+<meta name="build-version" content="a8801ec605e9dd26744f78319ddf28d91d459ad0">
 <title>The Good Egg – Farm Fresh Eggs</title>
 <meta name="description" content="Tracking your farm fresh eggs — inventory, pricing, and orders for The Good Egg farm.">
 <link rel="icon" type="image/jpeg" href="logo.jpg">
@@ -340,6 +341,32 @@
   .admin-btn:hover  { background: var(--brown-50); }
   .admin-btn:active { transform: scale(0.98); }
   .admin-btn i      { font-size: 20px; color: var(--brown-600); }
+
+  /* PWA update banner — appears when a newer service worker is installed
+     and waiting. Lives at the bottom so it doesn't fight the top nav. */
+  .update-banner {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: var(--yellow-500); color: var(--brown-900);
+    padding: 12px 16px;
+    display: none;
+    align-items: center; gap: 12px;
+    box-shadow: 0 -2px 16px rgba(76,46,22,.18);
+    z-index: 1000;
+    font-size: 14px; font-weight: 600;
+  }
+  .update-banner.visible { display: flex; }
+  .update-banner i { font-size: 18px; }
+  .update-banner .msg { flex: 1; line-height: 1.3; }
+  .update-banner .msg small { display: block; font-weight: 500; font-size: 11px; color: var(--brown-700); margin-top: 2px; }
+  .update-banner button {
+    border: none; cursor: pointer; font-weight: 700; font-size: 13px;
+    padding: 8px 14px; border-radius: 8px;
+    background: var(--brown-800); color: var(--yellow-300);
+    transition: background .15s;
+  }
+  .update-banner button:hover  { background: var(--brown-900); }
+  .update-banner .dismiss      { background: transparent; color: var(--brown-800); padding: 8px 8px; }
+  .update-banner .dismiss:hover{ background: rgba(0,0,0,.06); }
   .pin-dots { display: flex; gap: 12px; justify-content: center; margin: 20px 0; }
   .pin-dot  { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--brown-600); background: transparent; transition: background .15s; }
   .pin-dot.filled { background: var(--brown-700); border-color: var(--brown-700); }
@@ -722,8 +749,23 @@ let state = {
 let isAdmin         = false;
 let pinBuffer       = '';
 let adminPinHash    = null;       // hashed PIN held in memory after successful login
-let currentAdmin    = null;       // { id, name } of the logged-in admin
+let currentAdmin    = null;       // { id, name } of the logged-in admin (set from server response)
 let pendingAdminId  = null;       // admin selected on the PIN screen, before PIN entry
+
+// Multi-admin feature flag — defaults OFF for A/B testing on production.
+// Enable per-device by either:
+//   1. Appending ?multiAdmin=1 to the URL (sticky for the session)
+//   2. Running localStorage.setItem('good-egg-multi-admin','1') in DevTools
+// When OFF: PIN screen is a single keypad (legacy UI). The server's bwd-compat
+// layer still attributes activity to the matching admin so the audit trail is
+// correct; the user just doesn't pick a username first.
+const MULTI_ADMIN_ENABLED =
+  (new URLSearchParams(location.search).get('multiAdmin') === '1') ||
+  (typeof localStorage !== 'undefined' && localStorage.getItem('good-egg-multi-admin') === '1');
+if (MULTI_ADMIN_ENABLED && new URLSearchParams(location.search).get('multiAdmin') === '1') {
+  // URL param wins — persist it so reloads (incl. SW updates) keep the mode
+  try { localStorage.setItem('good-egg-multi-admin', '1'); } catch (e) {}
+}
 let pendingOrderId  = null;  // UUID generated per order form, for dedup
 let pollTimer       = null;
 let inFlightActions = 0;     // > 0 → polling pauses so it doesn't clobber optimistic updates
@@ -956,9 +998,29 @@ function tryAdmin() {
   updatePinDots();
   document.getElementById('pin-error').textContent = '';
   setPinPadDisabled(false);
-  document.getElementById('admin-selector').style.display = 'flex';
-  document.getElementById('pin-entry').style.display     = 'none';
-  renderAdminPickList();
+
+  if (MULTI_ADMIN_ENABLED && state.admins && state.admins.length > 0) {
+    // Multi-admin UI: pick username → enter password.
+    document.getElementById('admin-selector').style.display = 'flex';
+    document.getElementById('pin-entry').style.display     = 'none';
+    // Show the "Signing in as X" header + back button (may have been hidden by a previous legacy open)
+    const asLine = document.querySelector('#pin-entry .pin-as');
+    if (asLine) asLine.style.display = '';
+    const back = document.querySelector('#pin-entry .btn[onclick="backToAdminPick()"]');
+    if (back) back.style.display = '';
+    renderAdminPickList();
+  } else {
+    // Legacy UI: just the keypad. Server's bwd-compat resolves the admin
+    // from the pinHash (and attributes activity correctly behind the scenes).
+    document.getElementById('admin-selector').style.display = 'none';
+    document.getElementById('pin-entry').style.display     = 'flex';
+    // Hide the "Signing in as X" header — no name picked
+    const asLine = document.querySelector('#pin-entry .pin-as');
+    if (asLine) asLine.style.display = 'none';
+    // Hide the "Choose different admin" back button in legacy mode
+    const back = document.querySelector('#pin-entry .btn[onclick="backToAdminPick()"]');
+    if (back) back.style.display = 'none';
+  }
   document.getElementById('pin-screen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
 }
@@ -1010,7 +1072,8 @@ function setMode(mode) {
   document.getElementById('admin-inventory-section').style.display = isAdmin ? 'block' : 'none';
   document.getElementById('admin-price-save').style.display       = isAdmin ? 'block' : 'none';
   document.getElementById('admin-pin-card').style.display         = isAdmin ? 'block' : 'none';
-  document.getElementById('admin-people-card').style.display      = isAdmin ? 'block' : 'none';
+  // Manage Admins card is a multi-admin feature — hidden in legacy UI mode.
+  document.getElementById('admin-people-card').style.display      = (isAdmin && MULTI_ADMIN_ENABLED) ? 'block' : 'none';
   renderAdminPeople();
   // Show the logged-in admin's name next to the brand
   const whoEl = document.getElementById('current-admin-label');
@@ -1038,19 +1101,22 @@ function pinBack()  { pinBuffer = pinBuffer.slice(0,-1); updatePinDots(); }
 function pinClear() { pinBuffer = ''; updatePinDots(); }
 
 async function verifyPin(pin) {
-  if (!pendingAdminId) return;
+  // Multi-admin UI requires pendingAdminId; legacy mode doesn't (server resolves).
+  if (MULTI_ADMIN_ENABLED && !pendingAdminId) return;
   setPinPadDisabled(true);
   document.getElementById('pin-error').textContent = '';
   try {
     const hash = await sha256(pin);
-    const res  = await callScript({ action: 'verifyPIN', adminId: pendingAdminId, pinHash: hash });
-    if (res.success && res.admin) {
+    const payload = { action: 'verifyPIN', pinHash: hash };
+    if (pendingAdminId) payload.adminId = pendingAdminId;
+    const res = await callScript(payload);
+    if (res.success) {
       adminPinHash = hash;
-      currentAdmin = res.admin;
+      currentAdmin = res.admin || null;   // server attributes us; UI may or may not show name
       document.getElementById('pin-screen').style.display = 'none';
       document.getElementById('app').style.display = 'flex';
       setMode('admin');
-      showToast(`Welcome, ${res.admin.name}`);
+      showToast(res.admin ? `Welcome, ${res.admin.name}` : 'Admin mode activated');
     } else {
       document.getElementById('pin-error').textContent = 'Incorrect password. Try again.';
       pinBuffer = '';
@@ -1930,6 +1996,79 @@ if (SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
   const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
   const link = Object.assign(document.createElement('link'), { rel: 'manifest', href: URL.createObjectURL(blob) });
   document.head.appendChild(link);
+})();
+</script>
+
+<!-- PWA UPDATE BANNER -->
+<div id="update-banner" class="update-banner" role="status" aria-live="polite">
+  <i class="ti ti-arrow-up-circle"></i>
+  <div class="msg">
+    New version available
+    <small>The Good Egg has been updated</small>
+  </div>
+  <button class="dismiss" onclick="dismissUpdate()" title="Hide for now"><i class="ti ti-x"></i></button>
+  <button onclick="applyUpdate()">Refresh</button>
+</div>
+
+<!-- SERVICE WORKER REGISTRATION + UPDATE DETECTION -->
+<script>
+(function () {
+  if (!('serviceWorker' in navigator)) return;
+
+  // localStorage flag — set to '1' for silent auto-update (no banner).
+  // Default behaviour is to show the banner so people aren't reloaded
+  // mid-action; flip the flag from devtools to enable auto-update.
+  const AUTO_UPDATE = localStorage.getItem('good-egg-auto-update') === '1';
+  const banner = document.getElementById('update-banner');
+  let waitingWorker = null;
+
+  function showBanner(worker) {
+    waitingWorker = worker;
+    if (AUTO_UPDATE) { applyUpdate(); return; }
+    banner.classList.add('visible');
+  }
+  window.dismissUpdate = function () {
+    banner.classList.remove('visible');
+  };
+  window.applyUpdate = function () {
+    if (waitingWorker) {
+      waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+    } else {
+      window.location.reload();
+    }
+  };
+
+  // After a new SW takes over, reload exactly once.
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    // Poll for SW updates every 60 s while the tab is open. The browser
+    // also auto-checks on navigation but this catches long-lived tabs.
+    setInterval(() => reg.update().catch(() => {}), 60 * 1000);
+
+    // Path A: there's already a waiting SW from a previous visit.
+    if (reg.waiting && navigator.serviceWorker.controller) {
+      showBanner(reg.waiting);
+    }
+
+    // Path B: a new SW is discovered now.
+    reg.addEventListener('updatefound', () => {
+      const newSw = reg.installing;
+      if (!newSw) return;
+      newSw.addEventListener('statechange', () => {
+        if (newSw.state === 'installed' && navigator.serviceWorker.controller) {
+          // Only show the banner if there's already a controller — i.e.
+          // this isn't the very first SW install.
+          showBanner(newSw);
+        }
+      });
+    });
+  }).catch(err => console.warn('SW registration failed', err));
 })();
 </script>
 </body>
