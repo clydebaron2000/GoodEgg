@@ -1,12 +1,24 @@
-# The Good Egg — Detailed Technical Design
+# The Good Egg — Technical Design
+
+> **Source of truth.** This document describes the **shipped** system: a
+> Google Apps Script + Google Sheets backend behind a single-file PWA. An
+> earlier Firebase/Firestore design was drafted but **never built** — see
+> [Appendix A](#appendix-a--superseded-firebase-design-never-shipped). When
+> in doubt, `Code.gs` + the Sheet are authoritative over any prose here.
 
 ## 1. Overview
 
-The Good Egg is a mobile-first web app (single HTML file, PWA-installable) for a Philippine poultry farm. It tracks egg inventory by size, manages pricing, and handles customer orders. The backend is Firebase Firestore, hosted in the Singapore region (`asia-southeast1`) to minimize latency from the Philippines (~50–150ms).
+The Good Egg is a mobile-first web app (single `index.html`, PWA-installable)
+for a Philippine poultry farm. It tracks egg inventory by size, manages
+pricing, and handles customer orders.
 
 **Users:**
-- **Customers** — view stock, view prices, submit orders (no login required)
-- **Admins** — all of the above + manage stock, confirm/close orders, edit prices, change PIN
+- **Customers** — view stock, view prices, submit orders (no login)
+- **Admins** — all of the above + add/deduct stock, confirm/close/delete
+  orders, edit prices, add/remove egg sizes, manage other admins, change PIN.
+  Gated by a 4-digit PIN.
+
+Quantities are in **trays** (default 30 eggs/tray). Prices are **per tray, in PHP**.
 
 ---
 
@@ -14,329 +26,221 @@ The Good Egg is a mobile-first web app (single HTML file, PWA-installable) for a
 
 | Layer | Choice | Why |
 |---|---|---|
-| Frontend | Single HTML file (vanilla JS) | No build step; works as PWA; deployable anywhere |
-| Database | Firebase Firestore | Singapore region; offline-first SDK; free tier sufficient; real-time listeners |
-| Auth | PIN + SHA-256 hash (no Firebase Auth) | No accounts needed; simple for farm staff; hash verified server-side via Security Rules |
-| Hosting | Firebase Hosting or GitHub Pages | Free; global CDN; HTTPS |
+| Frontend | Single `index.html`, vanilla JS, no build step | Deployable anywhere; installs as a PWA via `sw.js` |
+| Backend | Google Apps Script (`Code.gs`) Web App | Free, no server to run, JSON API over a Sheet |
+| Storage | A Google Sheet (one tab per table) | Human-inspectable; the farm owner can read/edit rows directly |
+| Auth | 4-digit PIN → SHA-256 hash, verified server-side | No accounts to manage; simple for farm staff |
+| Hosting | GitHub Pages, auto-deployed by GitHub Actions | Free, HTTPS, global CDN |
 
-**Free tier limits** (Firebase Spark plan):
-- 50,000 reads/day, 20,000 writes/day — ample for a small farm
-- 1 GB storage
-- 10 GB/month bandwidth
-
----
-
-## 3. Firestore Data Model
-
-All data lives in a single Firestore database in `asia-southeast1`.
-
-### 3.1 `/config` (document)
-
-```
-{
-  adminPinHash:  string,   // SHA-256 of the 4-digit PIN (hex string)
-  eggsPerTray:   number,   // default: 30
-  updatedAt:     timestamp
-}
-```
-
-PIN is never stored in plain text. The client hashes the entered PIN with SHA-256 before any comparison or transmission. Security Rules compare the submitted hash against the stored hash.
-
-### 3.2 `/stock` (document)
-
-```
-{
-  small:   number,  // tray count
-  medium:  number,
-  large:   number,
-  xl:      number,
-  jumbo:   number,
-  updatedAt: timestamp
-}
-```
-
-All stock changes go through a **Firestore transaction** to prevent race conditions (e.g., two admins deducting at the same time).
-
-### 3.3 `/prices` (document)
-
-```
-{
-  small:   number,  // price per tray in PHP
-  medium:  number,
-  large:   number,
-  xl:      number,
-  jumbo:   number,
-  updatedAt: timestamp
-}
-```
-
-### 3.4 `/orders/{orderId}` (collection)
-
-`orderId` is a UUID generated **on the client before the request is sent**. This makes order submission idempotent — if the network drops after the write succeeds but before the client receives the response, the user can retry and Firestore's `setDoc` will simply overwrite the same document with identical data.
-
-```
-{
-  id:          string,    // same as document ID (UUID)
-  name:        string,
-  contact:     string,
-  address:     string,
-  size:        string,    // 'small' | 'medium' | 'large' | 'xl' | 'jumbo'
-  trays:       number,
-  notes:       string,
-  status:      string,    // 'pending' | 'confirmed' | 'done'
-  createdAt:   timestamp,
-  updatedAt:   timestamp,
-  clientId:    string     // device fingerprint (optional, for analytics)
-}
-```
-
-### 3.5 `/activity/{autoId}` (collection)
-
-Append-only log. Firestore auto-generates the document ID.
-
-```
-{
-  action:    string,    // e.g. "+10 trays Large — Morning collection"
-  actor:     string,    // 'admin' | 'customer'
-  createdAt: timestamp
-}
-```
+The client **polls** `getState` every 30 seconds (`POLL_INTERVAL` in
+`index.html`). There is no realtime socket — polling is simple and robust on
+flaky mobile connections.
 
 ---
 
-## 4. Security Model
+## 3. API
 
-### 4.1 PIN Handling
+The Apps Script Web App is deployed **Execute as: Me / Who has access: Anyone
+(anonymous)**. It exposes exactly two entry points.
 
-1. Admin enters 4-digit PIN in the app
-2. App computes `SHA-256(pin)` in the browser using the Web Crypto API
-3. For **read-only** security check (login): hash is compared against `/config.adminPinHash` fetched from Firestore
-4. For **write operations**: the hash is included in every admin write request as a field (`_pinHash`)
-5. Firestore Security Rules verify `_pinHash == /config.adminPinHash` before allowing the write
-6. `_pinHash` is stripped or ignored after validation — it's not stored in the final document
+### 3.1 `GET ?action=getState`
 
-### 4.2 Security Rules Summary
+Returns the entire public state in one payload (the PIN hash is **never**
+included):
 
 ```
-/config       — read: open, write: require valid pinHash
-/stock        — read: open, write: require valid pinHash (+ transaction)
-/prices       — read: open, write: require valid pinHash
-/orders/{id}  — read: open (admin sees all), write:
-                  create: open (customers submit)
-                  update/delete: require valid pinHash
-/activity     — read: open, write: open (append-only from client)
+{
+  admins,       // active admins, id + name + createdAt only (no pinHash)
+  sizes,        // [{ key, label, sortOrder }]
+  stock,        // { <sizeKey>: trays }
+  prices,       // { <sizeKey>: pricePerTray }
+  orders,       // [{ id, name, contact, address, size, trays, notes,
+                //    status, time, createdAt, unitPrice }]
+  activity,     // freeform human-readable log
+  stockEvents,  // structured restock/sale log (last 500)
+  priceEvents,  // structured price-change log (last 500)
+  ts            // server time, epoch ms
+}
 ```
 
-### 4.3 Why This Is Acceptable
+### 3.2 `POST` `{ action, ... }`
 
-- A 4-digit PIN has 10,000 possibilities. An attacker brute-forcing the endpoint would need 10,000 write requests. Firebase's built-in abuse detection and rate limiting makes this impractical.
-- The worst-case breach is someone modifying stock counts. For a farm app, this is tolerable. If higher security is ever needed, migrate to Firebase Authentication with a proper login.
-- Customers can only submit orders and read data — no PIN required, by design.
+| Action | Auth | Effect |
+|---|---|---|
+| `verifyPIN` | public | Check a PIN; returns the resolved admin |
+| `submitOrder` | public | Create an order (idempotent by client UUID) |
+| `addStock` / `deductStock` | admin | Adjust tray counts; logs a stock event |
+| `savePrices` | admin | Update per-tray prices; logs price events |
+| `updateOrderStatus` | admin | pending → confirmed → done |
+| `deleteOrder` | admin | Remove an order (full row snapshotted to activity) |
+| `addSize` / `deleteSize` | admin | Add/remove an egg size at runtime |
+| `addAdmin` / `deleteAdmin` / `renameAdmin` | admin | Manage admins |
+| `changePIN` | admin | Rotate the calling admin's PIN |
+
+Every admin action returns the **fresh `state`** so the client updates
+without waiting for the next poll.
 
 ---
 
-## 5. Deduplication Strategy
+## 4. Data Model (Google Sheet tabs)
 
-This is the core engineering challenge for unreliable Philippine mobile connections.
+`setupSpreadsheet()` creates these tabs; `migrate()` brings an existing Sheet
+up to schema idempotently. Column order matters — the readers index by
+position.
 
-### 5.1 Order Submission (most critical)
+| Tab | Columns | Notes |
+|---|---|---|
+| `stock` | `size`, `trays` | One row per size key |
+| `prices` | `size`, `perTray` | PHP per tray |
+| `orders` | `id`, `name`, `contact`, `address`, `size`, `trays`, `notes`, `status`, `time`, `createdAt`, `unitPrice` | `id` is a client UUID; `unitPrice` is snapshotted at submit time |
+| `sizes` | `key`, `label`, `sortOrder` | **Canonical, runtime-editable** list of egg sizes |
+| `admins` | `id`, `name`, `pinHash`, `createdAt`, `active` | One row per admin; soft-delete via `active=false` |
+| `stock_events` | `createdAt`, `time`, `size`, `delta`, `reason`, `before`, `after`, `note`, `actor` | Append-only, for analytics/dashboard |
+| `price_events` | `createdAt`, `time`, `size`, `oldPrice`, `newPrice`, `actor` | Append-only |
+| `activity` | `action`, `time`, `createdAt`, `actor` | Freeform human-readable log |
+| `config` | `key`, `value` | Legacy `adminPinHash` row (migration), future settings |
+| `Dashboard` | — | Generated by `buildDashboard()`: KPIs + formula-driven aggregation tables. Rebuild any time; add charts manually |
 
-```
-User taps "Submit Order"
-  → App generates UUID (e.g. "ord_a3f9b2c1") BEFORE sending
-  → Button disabled, spinner shown
-  → Firestore setDoc("/orders/ord_a3f9b2c1", orderData)
-     ↓ network drop?
-  → SDK queues write in IndexedDB, retries automatically
-  → If user taps again → same UUID → same setDoc → no duplicate
-  → On success: button re-enabled, form cleared, toast shown
-```
+Sizes are **not hardcoded**. The seed set is small/medium/large/xl/jumbo, but
+`addSize`/`deleteSize` mutate the `sizes` tab (and seed/clear companion rows in
+`stock` and `prices`). `sizeLabel()` resolves a key to its display label from
+the `sizes` tab, falling back to a built-in map then the raw key.
 
-Key: the UUID is generated once per form fill, not per tap. It resets only when the form is intentionally cleared after success.
+All timestamps are written twice: a human-readable **UTC** string (`time`) so
+anyone opening the Sheet sees an unambiguous value, plus an epoch-ms
+`createdAt` the client converts to local time.
 
-### 5.2 Stock Changes (race conditions)
+---
 
-Stock add/deduct uses a **Firestore transaction**:
+## 5. Security Model
 
-```
-transaction:
-  1. Read current /stock document
-  2. Verify new value won't go negative
-  3. Write updated value
-  (Firestore retries automatically if another write happened between steps 1 and 3)
-```
+### 5.1 PIN handling
+1. Admin enters a 4-digit PIN; the browser computes `SHA-256(pin)` via the Web
+   Crypto API. The plaintext PIN never leaves the device.
+2. Login sends `{ adminId, pinHash }`; the server matches it against the
+   `admins` tab and returns `{ id, name }` on success.
+3. Every admin **write** re-sends the `pinHash` (and `adminId`). The server
+   re-verifies on each request — there are **no session tokens**. The
+   resolved admin name is stamped onto activity/event rows for attribution.
 
-This prevents two admins deducting the same stock simultaneously.
+### 5.2 Backwards compatibility
+A pre-multi-admin client sends only `{ pinHash }`. `verifyLegacyLogin_`
+accepts it if it matches **any active admin's** hash (first match wins), and
+falls back to the legacy `config.adminPinHash` row for Sheets not yet
+re-migrated. This lets the production deploy and feature branches share one
+Apps Script backend during rollout.
 
-### 5.3 Price and Config Updates
+### 5.3 Why a 4-digit PIN is acceptable
+Reads are intentionally open — customers must see stock and prices. The only
+thing a PIN guards is writes, whose worst case is someone editing tray counts.
+Brute force means thousands of POSTs against Apps Script, which its execution
+quotas throttle. If stronger auth is ever needed, the `admins` tab already
+models per-user identity to build on.
 
-These are simple `setDoc` / `updateDoc` calls — last write wins. Acceptable because only one admin is expected to edit prices at a time.
+### 5.4 Spreadsheet-formula injection
+Any user-supplied string written to the Sheet passes through `asText_()`,
+which prefixes a leading `=`, `+`, `-`, or `@` with an apostrophe so Sheets
+stores it as text instead of evaluating it as a formula.
 
-### 5.4 UI-Level Protection
+---
 
-| Situation | Handling |
+## 6. Concurrency & Deduplication
+
+This is the core engineering concern for unreliable Philippine mobile networks.
+
+- **Write serialization.** Every mutating handler takes a
+  `LockService.getScriptLock()` (15s wait) so two simultaneous writes can't
+  interleave. (The Firestore "transactions" in the old design map to this
+  script lock in the shipped backend.)
+- **Stock floor.** `deductStock` reads the current value under the lock and
+  refuses to go negative (`code: INSUFFICIENT_STOCK`).
+- **Order idempotency.** The client generates the order `id` (UUID) *before*
+  sending. `submitOrder` checks whether that `id` already exists and, if so,
+  returns `{ success: true, deduplicated: true }` silently — so a retry after
+  a dropped response never creates a duplicate.
+- **Revenue integrity.** `submitOrder` snapshots the current per-tray price
+  into the order's `unitPrice` server-side, so a tampered client can't
+  underreport and later price edits don't rewrite order history.
+
+---
+
+## 7. Deployment
+
+Both halves deploy automatically from `main` (and every branch) via GitHub
+Actions. See `README.md` and `Apps_Script_Sync_Setup.md` for the full
+walkthrough; the short version:
+
+### 7.1 Frontend → GitHub Pages (`.github/workflows/deploy.yml`)
+- Triggers on push to **any** branch.
+  - `main` → site root → `https://clydebaron2000.github.io/GoodEgg/`
+  - any other branch → `https://clydebaron2000.github.io/GoodEgg/preview/<branch>/`
+- Stages `index.html` (+ `sw.js`, logo) into `dist/`, injects the `SCRIPT_URL`
+  repo secret in place of `YOUR_APPS_SCRIPT_URL_HERE`, stamps the commit SHA
+  into `__BUILD_VERSION__`, and publishes to the `gh-pages` branch with
+  `keep_files: true` (so previews and production don't clobber each other).
+- Pages is configured as **Deploy from a branch → `gh-pages` → `/` (root)**.
+
+### 7.2 Backend → Apps Script (`.github/workflows/sync-appscript.yml`)
+- On push to `main` touching `Code.gs`/`appsscript.json`, `clasp` pushes the
+  code and bumps the **existing** deployment to a new version, so the `/exec`
+  URL stays stable. `.claspignore` restricts the push to `Code.gs` +
+  `appsscript.json` (never `index.html`).
+
+---
+
+## 8. Operational Helpers (Apps Script editor)
+
+Run these from the Apps Script editor's function dropdown:
+
+| Function | Purpose |
 |---|---|
-| Slow network on submit | Button disabled + spinner until response or timeout |
-| Request times out | Toast: "Retrying…" — SDK retries automatically |
-| Confirmed success but offline | Write queued in IndexedDB, applied on reconnect |
-| Double-tap before disable kicks in | UUID prevents duplicate in Firestore |
-| Admin deducts more than available | Transaction checks balance before writing, returns error |
+| `setupSpreadsheet()` | One-time: create all tabs, seed defaults, default admin PIN `1234` |
+| `migrate()` | Idempotent schema/data upgrade for an existing Sheet |
+| `buildDashboard()` | (Re)build the `Dashboard` tab |
+| `addAdminQuick()` / `addAdminInteractive()` | Onboard an admin without the in-app UI |
+| `listAdmins()` | Print the admin roster to the log |
+
+PIN reset: delete the `adminPinHash` value (legacy `config` row) / the relevant
+`admins` row, then the default `1234` works again.
 
 ---
 
-## 6. Offline Behaviour
-
-Firebase SDK's `enableIndexedDbPersistence()` is enabled on startup.
-
-| Scenario | Behaviour |
-|---|---|
-| Phone goes offline mid-session | Reads serve from IndexedDB cache |
-| Admin adds stock while offline | Write queued locally, synced on reconnect |
-| Customer submits order while offline | Order queued, submitted on reconnect |
-| Two devices diverge while offline | Firestore merges on reconnect (last-write-wins for scalars; transactions re-verify stock) |
-| App opened cold offline | Last-cached data shown; stale indicator displayed |
-
-**Trade-off:** An order submitted offline might be for a size that ran out while the customer was offline. Admin review catches this — the confirmation step before stock deduction handles it gracefully.
-
----
-
-## 7. Operations Design
-
-### 7.1 App Load
-
-```
-1. Initialize Firebase SDK (Singapore endpoint)
-2. enableIndexedDbPersistence()
-3. onSnapshot("/stock") → live inventory updates
-4. onSnapshot("/prices") → live price updates
-5. onSnapshot("/orders") → live order list (admin) or filtered (customer)
-6. Fetch /config for PIN hash (cached by SDK)
-7. Render UI with cached data immediately, update as snapshots arrive
-```
-
-`onSnapshot` means the app auto-updates in real time when another device makes a change — no manual refresh needed.
-
-### 7.2 Admin Login
-
-```
-1. User enters PIN on PIN screen
-2. SHA-256(PIN) computed in browser
-3. Compare against /config.adminPinHash (already cached from step 6)
-4. Match → enter admin mode (client-side state only)
-5. All subsequent admin writes include the hash for server-side re-verification
-```
-
-### 7.3 Add Stock
-
-```
-1. Admin enters size + tray count + note
-2. App generates activityId (UUID)
-3. Firestore.runTransaction():
-   a. Read /stock
-   b. stock[size] += trays
-   c. Write /stock with updatedAt
-4. Firestore.addDoc("/activity", { action, pinHash }) (parallel)
-5. Toast + clear form
-```
-
-### 7.4 Deduct Stock (sold)
-
-Same as Add Stock but step 3b verifies `stock[size] - trays >= 0` before writing. Transaction aborts with error if insufficient.
-
-### 7.5 Submit Order (customer)
-
-```
-1. Customer fills form
-2. UUID generated on first field entry (not on submit tap)
-3. On submit: validate fields client-side
-4. Firestore.setDoc("/orders/{uuid}", orderData)
-   (setDoc is idempotent — safe to retry)
-5. Activity log entry written
-6. Form cleared, UUID reset
-```
-
-### 7.6 Confirm / Complete Order (admin)
-
-```
-1. Admin taps Confirm or Mark Done
-2. Firestore.updateDoc("/orders/{id}", { status, updatedAt, _pinHash })
-3. Security Rules verify pinHash
-4. Activity log entry written
-```
-
-### 7.7 Change PIN
-
-```
-1. Admin enters new 4-digit PIN
-2. App computes SHA-256(newPin)
-3. Firestore.updateDoc("/config", { adminPinHash: newHash, _pinHash: currentHash })
-4. Rules verify _pinHash matches old hash before allowing update
-5. Client updates in-memory hash
-```
-
----
-
-## 8. Real-Time Sync
-
-`onSnapshot` listeners mean all connected devices see updates immediately:
-
-- Admin adds stock on desktop → customer's phone stock count updates within ~1 second
-- Customer submits order → admin's phone shows new pending order with no refresh
-- Admin marks an order done → order disappears from pending list on all devices
-
-This is a significant upgrade over the current localStorage-only approach where each device has its own isolated state.
-
----
-
-## 9. Performance Expectations (Philippines)
-
-| Operation | Expected latency |
-|---|---|
-| App load (cached) | < 200ms |
-| App load (cold, online) | 800ms – 1.5s |
-| Read (onSnapshot, cached) | < 50ms |
-| Write (stock change) | 150–400ms |
-| Order submit | 150–400ms |
-| Offline read | < 20ms (IndexedDB) |
-
-These are estimates for a stable 4G connection in the Philippines to Firebase Singapore. On 3G or congested networks, writes may take 1–2s — the spinner and button-disable handling covers this gracefully.
-
----
-
-## 10. Deployment
-
-**Option A — Firebase Hosting (recommended)**
-- Single command: `firebase deploy`
-- Free SSL, global CDN, custom domain support
-- URL: `https://your-farm.web.app` or a custom domain like `eggs.yourfarm.com`
-
-**Option B — GitHub Pages**
-- Upload `index.html` to a public repo
-- Free, no server needed
-- Firebase SDK is loaded from CDN; Firestore calls work from any origin
-
----
-
-## 11. Setup Steps (high-level)
-
-1. Create a Firebase project at console.firebase.google.com
-2. Enable Firestore, select `asia-southeast1` (Singapore) region
-3. Paste Security Rules
-4. Copy Firebase config (apiKey, projectId, etc.) into `index.html`
-5. Run the one-time seed script to create `/config`, `/stock`, `/prices` documents with defaults
-6. Deploy HTML file (Firebase Hosting or GitHub Pages)
-7. Open on phone, install as PWA (Add to Home Screen)
-
-Total setup time: ~30 minutes.
-
----
-
-## 12. Future Considerations
+## 9. Future Considerations
 
 | Feature | Approach |
 |---|---|
-| SMS confirmation on order | Integrate Semaphore or Vonage (Philippine SMS) via a simple Cloud Function |
-| Multiple farms / locations | Add `/farm/{farmId}/` namespace to all collections |
-| Sales reports | Query `/orders` by date range + `/activity` log; export to CSV |
-| Stronger auth | Migrate to Firebase Authentication (email/password or phone OTP) |
-| Push notifications | Firebase Cloud Messaging (FCM) — notify admin of new orders |
+| SMS order confirmations | Call a Philippine SMS API (Semaphore/Vonage) from a handler |
+| Sales reports | The `Dashboard` tab + `stock_events`/`price_events`; export to CSV |
+| Stronger auth | Build on the per-admin `admins` tab (e.g. phone OTP) |
+| Multiple farms | Namespace tabs per farm, or one Sheet per farm |
+
+---
+
+## Appendix A — Superseded Firebase design (never shipped)
+
+Before the Apps Script + Sheets backend was built, an alternate design
+targeted **Firebase Firestore** in the Singapore region (`asia-southeast1`),
+using `onSnapshot` realtime listeners, IndexedDB offline persistence, Firestore
+transactions, and Security Rules to verify the PIN hash. It was dropped in
+favour of Apps Script + Sheets because the Sheet is directly inspectable and
+editable by the farm owner, needs no Firebase project or SDK, and hosts free on
+GitHub Pages.
+
+The concepts carried over almost one-to-one:
+
+| Firestore design | Shipped equivalent |
+|---|---|
+| Firestore documents/collections | Google Sheet tabs |
+| `onSnapshot` realtime listeners | 30-second `getState` polling |
+| Firestore transactions | `LockService` script lock |
+| Security Rules check `_pinHash` | Server-side hash check in `doPost` |
+| IndexedDB offline persistence | (not implemented) |
+
+The full original Firestore document — data model, Security Rules, latency
+tables — remains in this file's git history if needed for reference. It does
+**not** describe the running system.
+
+A migration-specific companion — trigger signals, the Sheet-tab → Firestore
+mapping, concurrency/auth strategy, and cutover/rollback steps — lives on the
+**`firebase-migration`** branch as `Firebase_Migration_Plan.md`, ready to pull
+off the shelf when the app needs to scale past Apps Script.

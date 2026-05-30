@@ -39,7 +39,7 @@ Estimated time: **30–40 minutes**. No coding required — just copy-paste step
 
 **Step 9.** After it runs, you should see an alert popup saying **"The Good Egg setup complete! Default admin PIN is: 1234"**. Click OK.
 
-**Step 10.** Go back to your spreadsheet tab and refresh the page. You should now see four new sheets at the bottom: **stock**, **prices**, **orders**, **activity**. Each one has the correct column headers and starting data.
+**Step 10.** Go back to your spreadsheet tab and refresh the page. You should now see several new sheets at the bottom: **stock**, **prices**, **orders**, **sizes**, **admins**, **stock_events**, **price_events**, **activity**, and **config**. Each one has the correct column headers and starting data. (A **Dashboard** tab can be generated later by running `buildDashboard`.)
 
 ---
 
@@ -74,7 +74,7 @@ https://script.google.com/macros/s/AKfycb.../exec
 
 **Step 18.** Open the `index.html` file in a text editor (Notepad on Windows, TextEdit on Mac — make sure TextEdit is in plain text mode: Format → Make Plain Text).
 
-**Step 19.** Find this line near the top of the `<script>` section (around line 280):
+**Step 19.** Find this line in the `<script>` section (search the file for `SCRIPT_URL` — it's the `const SCRIPT_URL` near the top of the script):
 ```
 const SCRIPT_URL = 'YOUR_APPS_SCRIPT_URL_HERE';
 ```
@@ -120,23 +120,32 @@ That's your live app URL. Share it with staff and customers.
 
 ---
 
-### Option B — Firebase Hosting (if you're comfortable with a terminal)
+### Option B — Fork this repo and let GitHub Actions deploy (how the live app ships)
 
-**Step 23b.** Install Node.js from [nodejs.org](https://nodejs.org) if you haven't already.
+This is how the maintained copy at `clydebaron2000.github.io/GoodEgg` deploys:
+push to GitHub, and a workflow builds and publishes automatically — so you
+don't have to paste the Apps Script URL into the file by hand.
 
-**Step 24b.** Open Terminal (Mac) or Command Prompt (Windows) and run:
-```
-npm install -g firebase-tools
-firebase login
-firebase init hosting
-```
-Follow the prompts — choose your existing Firebase project, set the public directory to `.`, answer **No** to "Configure as a single-page app".
+**Step 23b.** Fork (or push your copy of) this repo to GitHub.
 
-**Step 25b.** From the directory containing `index.html`, run:
-```
-firebase deploy
-```
-Your live URL will be shown at the end (e.g., `https://your-project.web.app`).
+**Step 24b.** Add the Apps Script `/exec` URL from Step 17 as a repository
+**secret** named `SCRIPT_URL` (Settings → Secrets and variables → Actions →
+New repository secret). The deploy workflow injects it in place of
+`YOUR_APPS_SCRIPT_URL_HERE` at build time, so you can leave the placeholder in
+`index.html` (you can skip Part 4 if you go this route).
+
+**Step 25b.** In **Settings → Pages**, set Source to **Deploy from a branch**,
+branch **`gh-pages`**, folder **/ (root)**.
+
+**Step 26b.** Push to `main`. The workflow at `.github/workflows/deploy.yml`
+stages the site, injects `SCRIPT_URL`, stamps the build version, and publishes
+to the `gh-pages` branch. Your live URL is
+`https://<your-username>.github.io/<repo>/`.
+
+> Bonus: pushing **any other branch** publishes a preview at
+> `…/<repo>/preview/<branch>/`, so you can try changes before they hit the
+> production root. A second workflow (`sync-appscript.yml`) can also auto-sync
+> `Code.gs` to Apps Script on push — see `Apps_Script_Sync_Setup.md`.
 
 ---
 
@@ -168,15 +177,15 @@ The app icon will appear on the home screen. It opens full-screen, like a native
 
 **Step 33.** Once logged in, go to the **Inventory** tab and scroll down to the **Security** card. Tap **Change admin PIN** and set a new PIN that only you know.
 
-> Keep your PIN somewhere safe. There is no "forgot PIN" — if lost, you can reset it by going to Apps Script editor → Project Settings → Script Properties → delete the `adminPinHash` entry, then the default PIN 1234 will work again.
+> Keep your PIN somewhere safe. There is no "forgot PIN" — if lost, open the spreadsheet's **admins** tab and edit (or delete) your row, then re-run `migrate()` in the Apps Script editor to re-seed a default admin with PIN 1234.
 
 ---
 
 ## Part 8 — Updating the app in the future
 
 If you make changes to `index.html` and want to push them live:
-- **GitHub Pages:** upload the new file to your repo (same steps as Part 5A). Changes go live within 2 minutes.
-- **Firebase Hosting:** run `firebase deploy` again from your terminal.
+- **Manual upload (Option A):** upload the new file to your repo (same steps as Part 5A). Changes go live within ~2 minutes.
+- **GitHub Actions (Option B):** just `git push`. The deploy workflow rebuilds and republishes automatically.
 
 If you make changes to `Code.gs`:
 1. Paste the new code into the Apps Script editor
@@ -199,5 +208,5 @@ If you make changes to `Code.gs`:
 | Stock changes don't appear | Wait 30 seconds (the app polls every 30s). Or reload the page. |
 | Orders tab is empty | Expected on first run — no orders yet. |
 | "Exception: Timed out waiting for lock" in Apps Script logs | Two writes happened at exactly the same time. The next attempt will succeed — the app retries automatically. |
-| Admin PIN forgotten | Go to Apps Script editor → Project Settings (gear icon, left sidebar) → Script Properties → delete the row with key `adminPinHash`. Default PIN 1234 will work again. |
+| Admin PIN forgotten | Open the spreadsheet's **admins** tab, edit or delete the relevant row, then run `migrate()` in the Apps Script editor to re-seed a default admin with PIN 1234. |
 | Apps Script deployment shows old code | You need to create a **New version** (not redeploy the same version). See Part 8. |
