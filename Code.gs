@@ -22,9 +22,16 @@ var SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large', xl: 'XL', 
 // ── ROUTING ────────────────────────────────────────────────────
 
 function doGet(e) {
-  var action = (e.parameter && e.parameter.action) || 'getState';
+  var p      = (e && e.parameter) || {};
+  var action = p.action || 'getState';
   try {
-    if (action === 'getState') return jsonResponse(getState());
+    if (action === 'getState') {
+      // Optional payload trimming for flaky connections:
+      //   &lite=1      → omit the stock/price event tails (analytics-only)
+      //   &since=<ms>  → only rows newer than this epoch-ms (delta poll)
+      // Defaults (no params) return the full state, unchanged.
+      return jsonResponse(getState({ lite: p.lite === '1', since: Number(p.since) || 0 }));
+    }
     return jsonResponse({ error: 'Unknown action' });
   } catch (err) {
     return jsonResponse({ error: err.message });
@@ -49,9 +56,17 @@ function doPost(e) {
                         'addSize', 'deleteSize',
                         'addAdmin', 'deleteAdmin', 'renameAdmin'];
     if (adminActions.indexOf(action) !== -1) {
+      var gateId = data.adminId || 'legacy';
+      if (pinLockedOut_(gateId)) {
+        return jsonResponse({ error: 'Too many failed attempts — try again later', code: 'LOCKED_OUT' });
+      }
       var admin = verifyAdminLogin_(data.adminId, data.pinHash);
       if (!admin) admin = verifyLegacyLogin_(data.pinHash);
-      if (!admin) return jsonResponse({ error: 'Invalid login', code: 'UNAUTHORIZED' });
+      if (!admin) {
+        recordPinFailure_(gateId);
+        return jsonResponse({ error: 'Invalid login', code: 'UNAUTHORIZED' });
+      }
+      clearPinFailures_(gateId);
       data._admin = admin;            // { id, name }
       data.actorName = admin.name;     // convenience for legacy callsites
     }
@@ -79,18 +94,24 @@ function doPost(e) {
 
 // ── GET STATE ──────────────────────────────────────────────────
 // Returns all public data. PIN hash is never included.
-
-function getState() {
+//
+// opts (all optional; write handlers call with none → full state):
+//   since : epoch-ms; only orders/activity/events at or after it (delta poll)
+//   lite  : true → omit the stock/price event tails entirely
+function getState(opts) {
+  opts = opts || {};
+  var since = Number(opts.since) || 0;
+  var lite  = !!opts.lite;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   return {
     admins:       readAdminsPublic(ss),   // safe-to-expose subset (no pinHash)
     sizes:        readSizes(ss),
     stock:        readStock(ss),
     prices:       readPrices(ss),
-    orders:       readOrders(ss),
-    activity:     readActivity(ss),
-    stockEvents:  readStockEvents(ss),
-    priceEvents:  readPriceEvents(ss),
+    orders:       readOrders(ss, since),
+    activity:     readActivity(ss, since),
+    stockEvents:  lite ? [] : readStockEvents(ss, since),
+    priceEvents:  lite ? [] : readPriceEvents(ss, since),
     ts:           Date.now()
   };
 }
@@ -222,7 +243,10 @@ function verifyAdminLogin_(adminId, pinHash) {
     return a.active && a.id === adminId;
   });
   if (!admin) return null;
-  if (admin.pinHash !== pinHash) return null;
+  if (!pinMatches_(admin.pinHash, pinHash)) return null;
+  // Rehash-on-login: transparently upgrade an old bare-SHA256 row to the
+  // peppered form the first time its owner logs in. No re-enroll needed.
+  if (!isPeppered_(admin.pinHash)) upgradeStoredHash_(ss, admin.id, pinHash);
   return { id: admin.id, name: admin.name };
 }
 
@@ -234,13 +258,16 @@ function verifyLegacyLogin_(pinHash) {
   if (!pinHash) return null;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var admin = readAdmins(ss).find(function (a) {
-    return a.active && a.pinHash === pinHash;
+    return a.active && pinMatches_(a.pinHash, pinHash);
   });
-  if (admin) return { id: admin.id, name: admin.name };
+  if (admin) {
+    if (!isPeppered_(admin.pinHash)) upgradeStoredHash_(ss, admin.id, pinHash);
+    return { id: admin.id, name: admin.name };
+  }
   // Older deployments may still only have the legacy config row before
-  // migrate() has been re-run. Accept that too.
+  // migrate() has been re-run. Accept that too (stays bare; deprecated path).
   var legacy = readConfig(ss, PIN_KEY);
-  if (legacy && legacy === pinHash) return { id: '_legacy', name: 'Admin' };
+  if (legacy && pinMatches_(legacy, pinHash)) return { id: '_legacy', name: 'Admin' };
   return null;
 }
 
@@ -249,10 +276,12 @@ function verifyLegacyLogin_(pinHash) {
 // { success: true, admin } on the new path, { success: true } on the
 // legacy path so old clients still light up admin mode.
 function doVerifyPIN(data) {
+  var id = data.adminId || 'legacy';
+  if (pinLockedOut_(id)) return { success: false, code: 'LOCKED_OUT' };
   var admin = verifyAdminLogin_(data.adminId, data.pinHash);
-  if (admin) return { success: true, admin: admin };
-  admin = verifyLegacyLogin_(data.pinHash);
-  if (admin) return { success: true, admin: admin };  // new client field is harmless to old client
+  if (!admin) admin = verifyLegacyLogin_(data.pinHash);
+  if (admin) { clearPinFailures_(id); return { success: true, admin: admin }; }
+  recordPinFailure_(id);
   return { success: false };
 }
 
@@ -273,7 +302,7 @@ function createAdmin_(ss, name, pinHash) {
   var sheet = ss.getSheetByName(SHEET_ADMINS);
   if (!sheet) return { error: 'admins sheet not found — run migrate()' };
   var id = Utilities.getUuid();
-  sheet.appendRow([id, asText_(name), String(pinHash), Date.now(), true]);
+  sheet.appendRow([id, asText_(name), pepperHash_(String(pinHash)), Date.now(), true]);
   return { success: true, admin: { id: id, name: name } };
 }
 
@@ -359,7 +388,7 @@ function changePIN(data) {
   var rows  = sheet.getDataRange().getValues();
   for (var i = 1; i < rows.length; i++) {
     if (rows[i][0] === data._admin.id) {
-      sheet.getRange(i + 1, 3).setValue(data.newPinHash);
+      sheet.getRange(i + 1, 3).setValue(pepperHash_(data.newPinHash));
       logActivity(ss, data._admin.name + ' changed their password', data._admin.name);
       return { success: true };
     }
@@ -502,10 +531,11 @@ function savePrices(data) {
 
 // ── ORDERS ─────────────────────────────────────────────────────
 
-function readOrders(ss) {
+function readOrders(ss, since) {
   var rows   = ss.getSheetByName(SHEET_ORDERS).getDataRange().getValues();
   var orders = [];
   for (var i = 1; i < rows.length; i++) {
+    if (since && (Number(rows[i][9]) || 0) < since) continue;
     orders.push({
       id:        rows[i][0],
       name:      rows[i][1],
@@ -634,10 +664,11 @@ function describeDeletedOrder_(o) {
 
 // ── ACTIVITY ───────────────────────────────────────────────────
 
-function readActivity(ss) {
+function readActivity(ss, since) {
   var rows = ss.getSheetByName(SHEET_ACTIVITY).getDataRange().getValues();
   var log  = [];
   for (var i = 1; i < rows.length; i++) {
+    if (since && (Number(rows[i][2]) || 0) < since) continue;
     log.push({
       action:    rows[i][0],
       time:      rows[i][1],            // legacy pre-formatted string (script TZ)
@@ -699,7 +730,7 @@ function logPriceEvent(ss, data, actor) {
   ]);
 }
 
-function readStockEvents(ss) {
+function readStockEvents(ss, since) {
   var sheet = ss.getSheetByName(SHEET_STOCK_EVENTS);
   if (!sheet) return [];
   var rows  = sheet.getDataRange().getValues();
@@ -707,6 +738,7 @@ function readStockEvents(ss) {
   // Cap to the last EVENT_PAGE_SIZE rows to keep payload reasonable.
   var start = Math.max(1, rows.length - EVENT_PAGE_SIZE);
   for (var i = start; i < rows.length; i++) {
+    if (since && (Number(rows[i][0]) || 0) < since) continue;
     out.push({
       createdAt: rows[i][0],
       time:      rows[i][1],
@@ -722,13 +754,14 @@ function readStockEvents(ss) {
   return out;
 }
 
-function readPriceEvents(ss) {
+function readPriceEvents(ss, since) {
   var sheet = ss.getSheetByName(SHEET_PRICE_EVENTS);
   if (!sheet) return [];
   var rows  = sheet.getDataRange().getValues();
   var out   = [];
   var start = Math.max(1, rows.length - EVENT_PAGE_SIZE);
   for (var i = start; i < rows.length; i++) {
+    if (since && (Number(rows[i][0]) || 0) < since) continue;
     out.push({
       createdAt: rows[i][0],
       time:      rows[i][1],
@@ -785,6 +818,151 @@ function sizeMention_(size) {
 
 function plural(n) {
   return Number(n) !== 1 ? 's' : '';
+}
+
+// ── PIN SECURITY: peppering + rate limiting ────────────────────
+// The client sends SHA-256(pin). Stored unsalted, that's invertible by a
+// ~10k-entry rainbow table if the admins tab ever leaks. We add a server
+// pepper (an HMAC key kept in Script Properties, never in the Sheet) so a
+// leaked hash is useless without it. Stored forms:
+//   bare  : 64-hex SHA-256                      (legacy rows; upgraded on next login)
+//   p1$…  : HMAC-SHA256(pepper, clientHash)     (current)
+
+var PIN_PEPPER_KEY      = 'PIN_PEPPER';
+var PIN_MAX_ATTEMPTS    = 5;     // failures per id before lockout
+var PIN_LOCKOUT_SECONDS = 300;   // cooldown / sliding window
+
+function getPepper_() {
+  var props = PropertiesService.getScriptProperties();
+  var p = props.getProperty(PIN_PEPPER_KEY);
+  if (!p) { p = Utilities.getUuid() + Utilities.getUuid(); props.setProperty(PIN_PEPPER_KEY, p); }
+  return p;
+}
+
+function pepperHash_(clientHash) {
+  var raw = Utilities.computeHmacSha256Signature(String(clientHash), getPepper_());
+  return 'p1$' + raw.map(function (b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); }).join('');
+}
+
+function isPeppered_(stored) { return String(stored || '').indexOf('p1$') === 0; }
+
+// Match a stored value (bare or peppered) against the client-supplied hash.
+function pinMatches_(stored, clientHash) {
+  stored = String(stored || '');
+  if (!stored || !clientHash) return false;
+  if (isPeppered_(stored)) return constantTimeEq_(stored, pepperHash_(clientHash));
+  return constantTimeEq_(stored, String(clientHash));   // legacy bare hash
+}
+
+// Compare two equal-length strings without an early-exit timing leak.
+function constantTimeEq_(a, b) {
+  a = String(a); b = String(b);
+  if (a.length !== b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// Overwrite an admin's stored hash with the peppered form. Best-effort: a
+// failure here is non-fatal (the login that triggered it already succeeded).
+function upgradeStoredHash_(ss, adminId, clientHash) {
+  try {
+    var sheet = ss.getSheetByName(SHEET_ADMINS);
+    var rows  = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0] === adminId) { sheet.getRange(i + 1, 3).setValue(pepperHash_(clientHash)); return; }
+    }
+  } catch (e) {
+    Logger.log('upgradeStoredHash_ failed: ' + e);
+  }
+}
+
+// CacheService-backed failure counter (no Sheet writes on the auth hot path).
+// Keyed per adminId — raises brute-force cost without a session layer.
+function pinFailKey_(id) { return 'pinfail_' + (id || 'legacy'); }
+
+function pinLockedOut_(id) {
+  return (Number(CacheService.getScriptCache().get(pinFailKey_(id))) || 0) >= PIN_MAX_ATTEMPTS;
+}
+
+function recordPinFailure_(id) {
+  var cache = CacheService.getScriptCache();
+  var key   = pinFailKey_(id);
+  cache.put(key, String((Number(cache.get(key)) || 0) + 1), PIN_LOCKOUT_SECONDS);
+}
+
+function clearPinFailures_(id) { CacheService.getScriptCache().remove(pinFailKey_(id)); }
+
+// ── EVENT-TAB RETENTION ────────────────────────────────────────
+// The event/activity tabs append forever and will eventually hit the
+// Sheet's cell ceiling. Move rows older than EVENT_RETENTION_DAYS into a
+// `<name>_archive` tab. Orders are deliberately NEVER archived (the
+// dashboard's revenue math reads them all-time); the event tabs only feed
+// recent-window dashboard sections, so archiving old ones is lossless there.
+
+var EVENT_RETENTION_DAYS = 180;
+
+function archiveOldEvents() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var ss     = SpreadsheetApp.getActiveSpreadsheet();
+    var cutoff = Date.now() - EVENT_RETENTION_DAYS * 86400000;
+    var report = [];
+    archiveSheet_(ss, SHEET_STOCK_EVENTS, 0, cutoff, report);   // createdAt = col A
+    archiveSheet_(ss, SHEET_PRICE_EVENTS, 0, cutoff, report);   // createdAt = col A
+    archiveSheet_(ss, SHEET_ACTIVITY,     2, cutoff, report);   // createdAt = col C
+    showResult_(report.length ? report.join('\n')
+      : 'Nothing older than ' + EVENT_RETENTION_DAYS + ' days to archive.');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Partition `name` by row age: rows with a real createdAt < cutoff move to
+// `<name>_archive`; everything else (including rows with no timestamp) stays.
+// The archive tab is plain-text formatted so escaped strings (e.g.
+// "+7 trays Medium") don't get re-evaluated as formulas on write.
+function archiveSheet_(ss, name, tsCol, cutoff, report) {
+  var sheet = ss.getSheetByName(name);
+  if (!sheet || sheet.getLastRow() < 2) return;
+  var lastCol = sheet.getLastColumn();
+  var header  = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var all     = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var keep = [], move = [];
+  all.forEach(function (r) {
+    var ts = Number(r[tsCol]) || 0;
+    if (ts && ts < cutoff) move.push(r); else keep.push(r);
+  });
+  if (!move.length) return;
+
+  var archive = ss.getSheetByName(name + '_archive');
+  if (!archive) {
+    archive = ss.insertSheet(name + '_archive');
+    archive.getRange(1, 1, archive.getMaxRows(), lastCol).setNumberFormat('@');
+    archive.appendRow(header);
+    archive.getRange(1, 1, 1, lastCol).setFontWeight('bold');
+  }
+  archive.getRange(archive.getLastRow() + 1, 1, move.length, lastCol).setValues(move);
+
+  // Rewrite the source with only the kept rows (source columns keep their
+  // existing plain-text formats, set by applyTextFormats_).
+  sheet.getRange(2, 1, all.length, lastCol).clearContent();
+  if (keep.length) sheet.getRange(2, 1, keep.length, lastCol).setValues(keep);
+  report.push('• Archived ' + move.length + ' row' + plural(move.length) +
+              ' from `' + name + '` → `' + name + '_archive`');
+}
+
+// Run once from the editor to schedule weekly archival. Idempotent.
+function installArchivalTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'archiveOldEvents') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('archiveOldEvents').timeBased()
+    .onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(4).create();
+  showResult_('Installed weekly archival trigger (Sun ~04:00).\n' +
+              'Retention: ' + EVENT_RETENTION_DAYS + ' days. Old event/activity rows move to ' +
+              '`<name>_archive` tabs. Orders are never archived.');
 }
 
 // ── ONE-TIME SETUP ─────────────────────────────────────────────
