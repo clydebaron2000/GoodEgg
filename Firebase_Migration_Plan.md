@@ -122,13 +122,117 @@ Because cutover is just which data layer `index.html` talks to, rollback =
 redeploy the previous (Apps Script) `index.html`. Keep the Sheet authoritative
 and in sync until the dual-run phase proves out, so reverting loses nothing.
 
-## 8. Open questions / TODO before committing to this
+## 8. Dashboard & analytics (parity with the Sheets `Dashboard` tab)
+
+The Sheets backend ships a live `Dashboard` tab built by `buildDashboard()`
+(`Code.gs`). It recomputes from formulas on every open, so "live" is free.
+Firestore has no spreadsheet formulas, so we reproduce it with **three tiers**,
+picking per metric by cost and freshness needs:
+
+- **Tier A — in-app aggregation queries.** Firestore's `count()` / `sum()` /
+  `average()` aggregation queries run server-side and bill ~1 read per batch,
+  not per matched doc. Good for the cheap headline KPIs read on dashboard open.
+- **Tier B — precomputed rollup doc.** A Cloud Function triggered on
+  `orders`/`stock`/`stock_events`/`price_events` writes maintains a
+  `/dashboard/summary` doc (and `/dashboard/daily/{yyyy-mm-dd}` docs). The admin
+  client `onSnapshot`s it → KPIs update in realtime with one cheap read, the
+  closest analogue to the always-live Sheet. This is the recommended default.
+- **Tier C — BigQuery + Looker Studio.** Install the **Stream Firestore to
+  BigQuery** extension (`firestore-bigquery-export`) on `orders`,
+  `stock_events`, `price_events`, `activity`. Heavy/historical aggregations
+  become SQL, and Looker Studio gives the actual charts (replacing the manual
+  "Insert → Chart" step). Best for 30-day trends, per-size/customer rollups, and
+  ad-hoc questions.
+
+### Metric-by-metric mapping (mirrors the current dashboard exactly)
+
+| Dashboard element (Sheets) | Source today | Firestore approach |
+|---|---|---|
+| Trays / eggs in stock | `SUM(stock.trays)` | Tier B rollup field (cheap), or sum on read |
+| Inventory value | `Σ trays × price/tray` | Tier B rollup (recompute on stock/price write) |
+| Out of stock count | `COUNTIF(stock=0)` | Tier A `count()` where `trays == 0` |
+| Orders today / Pending | `COUNTIFS` on `createdAt`/`status` | Tier A `count()` queries |
+| Revenue today / MTD | `Σ done.trays × unitPrice` in window | Tier B daily rollups summed; verify in Tier C SQL |
+| Current stock by size | `stock` × `prices` × `sizes` | `onSnapshot` the per-size docs (already needed for UI) |
+| Daily restocked vs sold (30d) | `SUMIFS(stock_events.delta)` by day & reason | Tier C SQL `GROUP BY date, reason`; or Tier B `daily/*` docs |
+| Daily revenue (30d) | `SUMPRODUCT` over done orders by day | Tier C SQL; or Tier B `daily/*` docs |
+| Revenue per size (all-time) | `QUERY ... GROUP BY size` | Tier C SQL `GROUP BY size` |
+| Top customers (all-time) | `QUERY ... GROUP BY name` | Tier C SQL `GROUP BY name ORDER BY revenue` |
+| Order pipeline counts | `COUNTIF`/`SUMIF` by status | Tier A `count()`/`sum()` per status |
+| Recent price changes | `QUERY price_events ORDER BY ts DESC` | `orderBy(createdAt,'desc').limit(20)` query |
+
+Example Tier C query (revenue per size, replacing the `QUERY` formula):
+
+```sql
+SELECT size, SUM(trays) AS trays_sold, SUM(trays * unitPrice) AS revenue
+FROM `goodegg.firestore_export.orders_raw_latest`
+WHERE status = 'done'
+GROUP BY size
+ORDER BY revenue DESC;
+```
+
+**Invariant to preserve:** revenue math uses the `unitPrice` snapshotted on the
+order at submit time (not the current price) — same as the Sheet. Whatever tier
+computes revenue must read `order.unitPrice`, never join to live `prices`.
+
+## 9. Logs, monitoring & querying
+
+Two distinct kinds of "logs" — keep them separate:
+
+### 9.1 Business event logs (the `activity` / `*_events` collections)
+These already exist as data (see §3). In Firestore they stay as append-only
+collections and are streamed to **BigQuery** (Tier C above) for querying:
+
+- **Ad-hoc SQL** over `activity`, `stock_events`, `price_events` — audit
+  questions like "every write by admin X", "all price changes for `large` this
+  quarter", "who deleted order Y" (the current `deleteOrder` already snapshots
+  the full row into `activity`; preserve that).
+- **Looker Studio** dashboards/log views over the same tables.
+- **Retention:** apply a Firestore **TTL policy** (e.g. expire `activity` after
+  N months) so the live collection stays small while BigQuery keeps full
+  history cheaply. (Tracked in §10.)
+
+### 9.2 Operational / system logs (new capability Firebase adds)
+The Apps Script backend has almost no observability today (just Stackdriver
+exceptions via `appsscript.json`). Firebase gives real tooling:
+
+- **Cloud Logging** — structured logs from Cloud Functions (every admin write,
+  transaction abort like `INSUFFICIENT_STOCK`, dedup hits). Query in the Log
+  Explorer with filters/LogQL-style queries; sink to BigQuery for SQL.
+- **Security Rules denials** surface in Cloud Logging → catch
+  unauthorized-write attempts (the brute-force threat model from §5).
+- **Log-based metrics + Cloud Monitoring alerts** — e.g. alert on a spike in
+  rule-denials (possible PIN brute force), elevated function error rate, or
+  function latency. None of this is possible on Apps Script today.
+- **Error Reporting** — automatic grouping of function exceptions with alerts.
+
+### 9.3 Querying surfaces, at a glance
+
+| Question | Where |
+|---|---|
+| Business metrics, trends, revenue, audit trail | BigQuery SQL + Looker Studio |
+| Realtime KPIs in the admin UI | `/dashboard/*` rollup docs via `onSnapshot` |
+| "Why did this write fail?" / function errors | Cloud Logging (Log Explorer) |
+| "Is something abnormal right now?" | Cloud Monitoring alerts + dashboards |
+| Unauthorized-access attempts | Security Rules denial logs in Cloud Logging |
+
+## 10. Open questions / TODO before committing to this
 
 - [ ] Confirm Firestore free-tier (Spark) headroom vs. expected read volume —
       `onSnapshot` + per-size docs changes the read-count math a lot.
+      Note: BigQuery export + Cloud Functions push this toward the **Blaze**
+      (pay-as-you-go) plan — price it out.
 - [ ] Decide per-size docs vs. single map for `stock`/`prices`.
 - [ ] Decide auth path (§5 option 1 vs 2).
-- [ ] Event-log retention/archival policy so storage + read costs stay bounded.
+- [ ] Decide dashboard tier mix (§8): how much lives in realtime rollup docs
+      vs. BigQuery/Looker Studio. Leaning rollup docs for KPIs + BigQuery for
+      history/trends.
+- [ ] Stand up the `firestore-bigquery-export` extension + a Looker Studio
+      template that reproduces the current dashboard's charts.
+- [ ] Define Cloud Monitoring alert policies (rule-denial spike, function error
+      rate/latency) and log-based metrics.
+- [ ] Event-log retention/archival policy (Firestore TTL + BigQuery history) so
+      storage + read costs stay bounded.
 - [ ] Whether to also move hosting to Firebase Hosting or stay on GitHub Pages.
 
 ---
