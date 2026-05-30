@@ -1,8 +1,13 @@
 name: Deploy The Good Egg to GitHub Pages
 
-# Deploys every branch:
+# Deploys every branch EXCEPT those excluded below:
 #   main → root             → https://clydebaron2000.github.io/GoodEgg/
 #   any other → preview/<branch>/ → https://clydebaron2000.github.io/GoodEgg/preview/<branch>/
+#
+# Excluded branches (e.g. firebase-migration) are plan/docs-only and have no
+# deployable app, so they get no preview. NOTE: GitHub Actions evaluates this
+# trigger from the workflow file *on the pushed branch*, so an excluded branch
+# must also carry this exclusion in ITS copy of this file.
 #
 # Under the hood: builds a staged `dist/` (just index.html with the
 # SCRIPT_URL secret injected) and pushes it to the `gh-pages` branch,
@@ -17,7 +22,9 @@ name: Deploy The Good Egg to GitHub Pages
 
 on:
   push:
-    branches: ['**']
+    branches:
+      - '**'
+      - '!firebase-migration'   # plan-only branch; never deploy a preview
   workflow_dispatch:
 
 permissions:
