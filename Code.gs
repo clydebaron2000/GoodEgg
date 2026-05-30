@@ -19,6 +19,12 @@ var EVENT_PAGE_SIZE    = 500;  // cap events returned by getState (most recent f
 
 var SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large', xl: 'XL', jumbo: 'Jumbo' };
 
+// Testability seam: integration tests set __TEST_DB__ to a throwaway
+// spreadsheet so handlers run against it instead of the bound document.
+// In production __TEST_DB__ stays null and this is just getActiveSpreadsheet().
+var __TEST_DB__ = null;
+function getDb_() { return __TEST_DB__ || SpreadsheetApp.getActiveSpreadsheet(); }
+
 // ── ROUTING ────────────────────────────────────────────────────
 
 function doGet(e) {
@@ -81,7 +87,7 @@ function doPost(e) {
 // Returns all public data. PIN hash is never included.
 
 function getState() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
   return {
     admins:       readAdminsPublic(ss),   // safe-to-expose subset (no pinHash)
     sizes:        readSizes(ss),
@@ -118,7 +124,7 @@ function addSize(data) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    var ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var ss    = getDb_();
     var key   = String(data.key || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
     var label = String(data.label || '').trim() || key;
     if (!key) return { error: 'Size key is required' };
@@ -146,7 +152,7 @@ function deleteSize(data) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    var ss  = SpreadsheetApp.getActiveSpreadsheet();
+    var ss  = getDb_();
     var key = String(data.key || '');
     if (!key) return { error: 'Size key is required' };
 
@@ -217,7 +223,7 @@ function readAdminsPublic(ss) {
 // Verify (adminId, pinHash) and return { id, name } if valid, else null.
 function verifyAdminLogin_(adminId, pinHash) {
   if (!adminId || !pinHash) return null;
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
   var admin = readAdmins(ss).find(function (a) {
     return a.active && a.id === adminId;
   });
@@ -232,7 +238,7 @@ function verifyAdminLogin_(adminId, pinHash) {
 // while a feature branch shares the same Apps Script backend.
 function verifyLegacyLogin_(pinHash) {
   if (!pinHash) return null;
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
   var admin = readAdmins(ss).find(function (a) {
     return a.active && a.pinHash === pinHash;
   });
@@ -278,7 +284,7 @@ function createAdmin_(ss, name, pinHash) {
 }
 
 function addAdmin(data) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
   var res = createAdmin_(ss, data.name, data.newPinHash);
   if (res.error) return res;
   logActivity(ss, 'Added admin: ' + res.admin.name, data._admin.name);
@@ -286,7 +292,7 @@ function addAdmin(data) {
 }
 
 function deleteAdmin(data) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
   var targetId = String(data.targetId || '');
   if (!targetId) return { error: 'targetId required' };
 
@@ -313,7 +319,7 @@ function deleteAdmin(data) {
 }
 
 function renameAdmin(data) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
   var targetId = String(data.targetId || '');
   var newName  = String(data.newName || '').trim();
   if (!targetId || !newName) return { error: 'targetId and newName required' };
@@ -347,7 +353,7 @@ function renameAdmin(data) {
 function changePIN(data) {
   if (!data.newPinHash) return { error: 'No new password hash provided' };
   if (!/^[0-9a-f]{64}$/i.test(data.newPinHash)) return { error: 'Invalid password hash' };
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
 
   if (data._admin.id === '_legacy') {
     writeConfig(ss, PIN_KEY, data.newPinHash);
@@ -415,7 +421,7 @@ function addStock(data) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    var ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var ss    = getDb_();
     var sheet = ss.getSheetByName(SHEET_STOCK);
     var rows  = sheet.getDataRange().getValues();
     var trays = Number(data.trays);
@@ -442,7 +448,7 @@ function deductStock(data) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    var ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var ss    = getDb_();
     var sheet = ss.getSheetByName(SHEET_STOCK);
     var rows  = sheet.getDataRange().getValues();
     var trays = Number(data.trays);
@@ -480,7 +486,7 @@ function savePrices(data) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    var ss      = SpreadsheetApp.getActiveSpreadsheet();
+    var ss      = getDb_();
     var sheet   = ss.getSheetByName(SHEET_PRICES);
     var rows    = sheet.getDataRange().getValues();
     var changes = [];
@@ -533,7 +539,7 @@ function submitOrder(data) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    var ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var ss    = getDb_();
     var sheet = ss.getSheetByName(SHEET_ORDERS);
 
     // ── Deduplication: if same client ID already exists, return success silently
@@ -568,7 +574,7 @@ function updateOrderStatus(data) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    var ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var ss    = getDb_();
     var sheet = ss.getSheetByName(SHEET_ORDERS);
     var rows  = sheet.getDataRange().getValues();
     for (var i = 1; i < rows.length; i++) {
@@ -588,7 +594,7 @@ function deleteOrder(data) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    var ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var ss    = getDb_();
     var sheet = ss.getSheetByName(SHEET_ORDERS);
     var rows  = sheet.getDataRange().getValues();
     for (var i = 1; i < rows.length; i++) {
@@ -770,7 +776,7 @@ function sha256Hex(input) {
 // (covers pre-migration sheets) and finally to the raw key.
 function sizeLabel(size) {
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SIZES);
+    var sheet = getDb_().getSheetByName(SHEET_SIZES);
     if (sheet) {
       var rows = sheet.getDataRange().getValues();
       for (var i = 1; i < rows.length; i++) {
@@ -798,7 +804,7 @@ function plural(n) {
 // before you deploy the web app.
 
 function setupSpreadsheet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
 
   // Stock
   var stock = getOrCreate(ss, SHEET_STOCK);
@@ -898,7 +904,7 @@ function getOrCreate(ss, name) {
 var SHEET_DASHBOARD = 'Dashboard';
 
 function buildDashboard() {
-  var ss        = SpreadsheetApp.getActiveSpreadsheet();
+  var ss        = getDb_();
   var sheet     = ss.getSheetByName(SHEET_DASHBOARD);
   if (sheet) ss.deleteSheet(sheet);
   sheet = ss.insertSheet(SHEET_DASHBOARD, 0);  // place at the very left
@@ -1122,7 +1128,7 @@ function sectionHeader_(sheet, row, label) {
 // Run manually from the Apps Script editor whenever Code.gs is updated.
 
 function migrate() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
   var report = [];
 
   ensureAllSheets_(ss, report);
@@ -1184,7 +1190,7 @@ function addAdminInteractive() {
       'No UI session. Open the Sheet in a tab and re-run, or use addAdminQuick() instead.'
     );
   }
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
 
   if (!ss.getSheetByName(SHEET_ADMINS)) {
     ui.alert('admins sheet not found. Run migrate() first, then try again.');
@@ -1240,7 +1246,7 @@ function addAdminQuick() {
   var PIN  = '4729';     // 4–8 digit numeric password
   // ╚══════════════════════════════════════════════════════════════╝
 
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getDb_();
   if (!ss.getSheetByName(SHEET_ADMINS)) {
     Logger.log('❌ admins sheet not found. Run migrate() first, then try again.');
     return;
@@ -1268,7 +1274,7 @@ function addAdminQuick() {
 // Quick utility to list current admins from the editor — handy for
 // "who has access?" audits without opening the sheet tab.
 function listAdmins() {
-  var admins = readAdmins(SpreadsheetApp.getActiveSpreadsheet());
+  var admins = readAdmins(getDb_());
   if (!admins.length) {
     showResult_('No admins configured. Run migrate() or addAdminInteractive().');
     return;
