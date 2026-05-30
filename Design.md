@@ -214,6 +214,74 @@ PIN reset: delete the `adminPinHash` value (legacy `config` row) / the relevant
 | Stronger auth | Build on the per-admin `admins` tab (e.g. phone OTP) |
 | Multiple farms | Namespace tabs per farm, or one Sheet per farm |
 
+§9 is about *new* features. §10 below is about hardening what already ships.
+
+---
+
+## 10. Robustness & Hardening Roadmap
+
+These are known gaps in the **current** Apps Script + Sheets backend, ranked
+roughly by payoff-to-effort. None block the farm today; they are the work to do
+before the user base or data volume grows. Each is scoped to stay on Apps Script
++ Sheets — the Firebase migration ([Appendix A](#appendix-a--superseded-firebase-design-never-shipped),
+and the `firebase-migration` branch) is the separate "we've outgrown this" path.
+
+### 10.1 Correctness & data integrity
+- **Server-side input validation.** Handlers trust client-shaped payloads.
+  Validate at the `doPost` boundary: `trays` is a positive integer, `size` is a
+  known key from the `sizes` tab, free-text fields are length-capped *before*
+  `asText_()`. Reject with a typed `code` instead of writing a bad row.
+- **Scheduled Sheet backups.** A nightly time-driven trigger that copies the
+  Sheet (or exports each tab to CSV in Drive) bounds worst-case data loss to one
+  day. Today a fat-fingered manual edit or a bad `migrate()` has no undo beyond
+  Google's version history.
+- **`migrate()` safety rails.** It is idempotent but unguarded — there's no dry
+  run and no record of which migration version a Sheet is on. Stamp a
+  `schemaVersion` into `config` and have `migrate()` log a before/after diff so a
+  run on production is auditable.
+
+### 10.2 Availability & scale
+- **Bounded `getState` payload.** The client refetches the *entire* state every
+  30s, including the last 500 stock/price events. As `orders` grows unbounded,
+  this is the first thing that will get slow on a flaky phone connection. Options:
+  paginate or date-window `orders`, drop the event tails from the default poll
+  (fetch on demand for the dashboard), or add a lightweight `?action=getState&since=<ts>`
+  delta.
+- **Lock contention is global.** One `getScriptLock()` serializes *all* writes
+  farm-wide. Fine for one farm; the first real scaling wall. Document the ceiling
+  (Apps Script's ~30 simultaneous executions / quota limits) so the trigger to
+  migrate is a measured threshold, not a surprise outage.
+- **Event-tab growth.** `stock_events` / `price_events` / `activity` append
+  forever. Add a retention/rollup job (archive rows older than N months to a
+  dated tab or CSV) so the Sheet stays under cell limits.
+
+### 10.3 Security
+- **PIN rate-limiting.** `verifyPIN` has no throttle beyond Apps Script's own
+  quotas. A per-`adminId` attempt counter in `config` (with a cooldown after N
+  failures) raises the cost of brute-forcing a 4-digit space.
+- **Salt the PIN hash.** PINs are unsalted `SHA-256(pin)` — a 10k-entry rainbow
+  table inverts the whole space instantly if the `admins` tab ever leaks. Store
+  `SHA-256(salt + pin)` with a per-admin salt. (Migration needs a re-enroll or a
+  one-time client-assisted rehash.)
+- **Audit-log the sensitive actions.** `deleteOrder` snapshots to `activity`,
+  but admin-management actions (`addAdmin`/`deleteAdmin`/`changePIN`) should also
+  leave an attributable trail.
+
+### 10.4 Operability
+- **Automated tests + CI.** There is no test suite. The highest-value targets are
+  pure and testable: `asText_()` escaping, `deductStock` flooring, `submitOrder`
+  idempotency/`unitPrice` snapshotting, `sizeLabel()` fallback. Run them in
+  GitHub Actions (clasp can pull, or factor the pure logic into a testable
+  module) so a refactor can't silently break the money path.
+- **Observability & alerting.** Failures live only in the Apps Script execution
+  log. Wire a failure path (or a daily health-check trigger) to email/Slack the
+  owner on errors, lock timeouts, or a stale `getState`, so a broken deploy
+  isn't discovered by a customer.
+- **Client retry/offline UX.** The client polls and posts, but offline handling
+  is thin. A small outbox (queue writes in `localStorage`, replay on reconnect —
+  the UUID idempotency already makes this safe) would make the app usable through
+  the connectivity gaps it's explicitly built for.
+
 ---
 
 ## Appendix A — Superseded Firebase design (never shipped)
