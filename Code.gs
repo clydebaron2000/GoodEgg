@@ -16,6 +16,7 @@ var SHEET_STOCK_EVENTS = 'stock_events';
 var SHEET_PRICE_EVENTS = 'price_events';
 var PIN_KEY            = 'adminPinHash';  // legacy single-PIN config row, kept for migration
 var EVENT_PAGE_SIZE    = 500;  // cap events returned by getState (most recent first)
+var SCHEMA_VERSION     = 1;    // first stamped schema; bump whenever migrate() changes the layout
 
 var SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large', xl: 'XL', jumbo: 'Jumbo' };
 
@@ -27,6 +28,7 @@ function doGet(e) {
     if (action === 'getState') return jsonResponse(getState());
     return jsonResponse({ error: 'Unknown action' });
   } catch (err) {
+    notifyError_('doGet:' + action, err);
     return jsonResponse({ error: err.message });
   }
 }
@@ -73,6 +75,7 @@ function doPost(e) {
       default:                  return jsonResponse({ error: 'Unknown action' });
     }
   } catch (err) {
+    notifyError_('doPost', err);
     return jsonResponse({ error: err.message });
   }
 }
@@ -419,6 +422,8 @@ function addStock(data) {
     var sheet = ss.getSheetByName(SHEET_STOCK);
     var rows  = sheet.getDataRange().getValues();
     var trays = Number(data.trays);
+    if (!isPositiveInt_(trays)) return { error: 'Trays must be a positive whole number', code: 'BAD_INPUT' };
+    if (!isKnownSize_(ss, data.size)) return { error: 'Unknown size "' + data.size + '"', code: 'BAD_INPUT' };
     var before = 0, after = 0;
     for (var i = 1; i < rows.length; i++) {
       if (rows[i][0] === data.size) {
@@ -446,6 +451,8 @@ function deductStock(data) {
     var sheet = ss.getSheetByName(SHEET_STOCK);
     var rows  = sheet.getDataRange().getValues();
     var trays = Number(data.trays);
+    if (!isPositiveInt_(trays)) return { error: 'Trays must be a positive whole number', code: 'BAD_INPUT' };
+    if (!isKnownSize_(ss, data.size)) return { error: 'Unknown size "' + data.size + '"', code: 'BAD_INPUT' };
     var before = 0, after = 0;
     for (var i = 1; i < rows.length; i++) {
       if (rows[i][0] === data.size) {
@@ -485,7 +492,8 @@ function savePrices(data) {
     var size = rows[i][0];
     if (data.prices[size] !== undefined) {
       var oldPrice = Number(rows[i][1]) || 0;
-      var newPrice = Number(data.prices[size]) || 0;
+      var newPrice = Number(data.prices[size]);
+      if (!isFinite(newPrice) || newPrice < 0) return { error: 'Invalid price for size "' + size + '"', code: 'BAD_INPUT' };
       if (oldPrice !== newPrice) {
         sheet.getRange(i + 1, 2).setValue(newPrice);
         logPriceEvent(ss, { size: size, oldPrice: oldPrice, newPrice: newPrice }, data._admin && data._admin.name);
@@ -530,15 +538,22 @@ function submitOrder(data) {
     var ss    = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(SHEET_ORDERS);
 
+    var o = data.order;
+    // Validate at the boundary: a malformed payload should be rejected, not
+    // written as a junk row. The id check also guards the dedup loop below.
+    if (!o || typeof o !== 'object' || !o.id) return { error: 'Order id is required', code: 'BAD_INPUT' };
+    if (!isPositiveInt_(Number(o.trays)))     return { error: 'Trays must be a positive whole number', code: 'BAD_INPUT' };
+    if (!isKnownSize_(ss, o.size))            return { error: 'Unknown size "' + o.size + '"', code: 'BAD_INPUT' };
+    if (!String(o.name || '').trim())         return { error: 'Name is required', code: 'BAD_INPUT' };
+
     // ── Deduplication: if same client ID already exists, return success silently
     var existing = sheet.getDataRange().getValues();
     for (var i = 1; i < existing.length; i++) {
-      if (existing[i][0] === data.order.id) {
+      if (existing[i][0] === o.id) {
         return { success: true, deduplicated: true, state: getState() };
       }
     }
 
-    var o = data.order;
     // Lock in the current price as the order's unit price. Server-side so
     // a tampered client can't underreport revenue, and so later price
     // changes don't rewrite history.
@@ -546,8 +561,8 @@ function submitOrder(data) {
     var unitPrice     = Number(currentPrices[o.size]) || 0;
     var createdAt     = o.createdAt || Date.now();
     sheet.appendRow([
-      o.id, asText_(o.name), asText_(o.contact), asText_(o.address),
-      o.size, o.trays, asText_(o.notes || ''), 'pending', utcLabel_(createdAt),
+      o.id, asText_(capLen_(o.name, 80)), asText_(capLen_(o.contact, 60)), asText_(capLen_(o.address, 200)),
+      o.size, Number(o.trays), asText_(capLen_(o.notes || '', 500)), 'pending', utcLabel_(createdAt),
       createdAt,
       unitPrice
     ]);
@@ -785,6 +800,120 @@ function sizeMention_(size) {
 
 function plural(n) {
   return Number(n) !== 1 ? 's' : '';
+}
+
+// ── INPUT VALIDATION ───────────────────────────────────────────
+// Guards applied at the doPost boundary so a malformed or hostile payload
+// is rejected instead of writing a junk row (a bad `size` used to silently
+// no-op; a non-numeric `trays` used to write NaN).
+
+function isPositiveInt_(n) {
+  return typeof n === 'number' && isFinite(n) && n > 0 && Math.floor(n) === n;
+}
+
+function isKnownSize_(ss, size) {
+  if (!size) return false;
+  var sizes = readSizes(ss);
+  if (sizes.length) return sizes.some(function (s) { return s.key === size; });
+  return readStock(ss).hasOwnProperty(size);  // legacy sheet with no `sizes` tab yet
+}
+
+// Cap a user-supplied string to n characters before it's written to the
+// Sheet (defence against unbounded cells from a tampered client).
+function capLen_(v, n) {
+  var s = String(v == null ? '' : v);
+  return s.length > n ? s.slice(0, n) : s;
+}
+
+// ── OBSERVABILITY & MAINTENANCE ────────────────────────────────
+// Failures otherwise live only in the Apps Script execution log, where
+// nobody looks until a customer complains. These wire a failure path to
+// email and add scheduled backups so a bad day can't lose the Sheet.
+
+var ALERT_EMAIL_KEY        = 'alertEmail';   // optional config row; falls back to the script owner
+var ALERT_THROTTLE_SECONDS = 900;            // suppress duplicate alerts for 15 min so one bug ≠ inbox flood
+var BACKUP_FOLDER_NAME     = 'The Good Egg — backups';
+var BACKUP_KEEP            = 14;             // keep the most recent N daily copies
+
+function alertEmail_() {
+  var configured = readConfig(SpreadsheetApp.getActiveSpreadsheet(), ALERT_EMAIL_KEY);
+  if (configured) return String(configured);
+  try { return Session.getEffectiveUser().getEmail(); } catch (e) { return ''; }
+}
+
+// Email an alert, throttled per-context. Must never throw — alerting is
+// best-effort and must not turn a handled error into an unhandled one.
+function notifyError_(context, err) {
+  try {
+    var to = alertEmail_();
+    if (!to) return;
+    var cache = CacheService.getScriptCache();
+    var key   = 'alert_' + context;
+    if (cache.get(key)) return;                       // already alerted recently
+    cache.put(key, '1', ALERT_THROTTLE_SECONDS);
+    MailApp.sendEmail(
+      to,
+      'The Good Egg — error in ' + context,
+      'An error occurred in ' + context + ':\n\n' +
+      (err && err.stack ? err.stack : String(err)) +
+      '\n\nIdentical alerts are suppressed for ' + (ALERT_THROTTLE_SECONDS / 60) + ' minutes.'
+    );
+  } catch (e) {
+    Logger.log('notifyError_ failed: ' + e);
+  }
+}
+
+// Daily canary: prove getState still returns a sane payload; alert if not.
+function dailyHealthCheck() {
+  try {
+    var state = getState();
+    if (!state || !state.sizes || typeof state.ts !== 'number') {
+      throw new Error('getState returned an unexpected shape');
+    }
+  } catch (err) {
+    notifyError_('dailyHealthCheck', err);
+  }
+}
+
+// Copy the whole Sheet to a Drive folder, pruning to the last BACKUP_KEEP.
+function backupSpreadsheet() {
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var folder = backupFolder_();
+  var stamp  = Utilities.formatDate(new Date(), 'UTC', 'yyyy-MM-dd HHmm') + ' UTC';
+  DriveApp.getFileById(ss.getId()).makeCopy('Good Egg backup ' + stamp, folder);
+  pruneBackups_(folder);
+}
+
+function backupFolder_() {
+  var it = DriveApp.getFoldersByName(BACKUP_FOLDER_NAME);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(BACKUP_FOLDER_NAME);
+}
+
+function pruneBackups_(folder) {
+  var files = [];
+  var it = folder.getFiles();
+  while (it.hasNext()) files.push(it.next());
+  files.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
+  for (var i = BACKUP_KEEP; i < files.length; i++) files[i].setTrashed(true);
+}
+
+// Run once from the editor to register the daily backup + health-check
+// triggers. Idempotent: deletes any existing copies of these triggers first,
+// so re-running won't stack duplicates.
+function installMaintenanceTriggers() {
+  var managed = { backupSpreadsheet: true, dailyHealthCheck: true };
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (managed[t.getHandlerFunction()]) ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('backupSpreadsheet').timeBased().atHour(2).everyDays(1).create();
+  ScriptApp.newTrigger('dailyHealthCheck').timeBased().atHour(3).everyDays(1).create();
+  showResult_(
+    'Installed daily triggers:\n' +
+    '• backupSpreadsheet ~02:00 → Drive folder "' + BACKUP_FOLDER_NAME + '" (keeps last ' + BACKUP_KEEP + ')\n' +
+    '• dailyHealthCheck ~03:00 → emails on failure\n\n' +
+    'Error alerts go to a config row named "' + ALERT_EMAIL_KEY + '" if set, else the script owner.\n' +
+    'These use Drive/Mail/Triggers scopes — you may be asked to re-authorize once.'
+  );
 }
 
 // ── ONE-TIME SETUP ─────────────────────────────────────────────
@@ -1129,13 +1258,28 @@ function migrate() {
   migratePinToConfigSheet_(ss, report);
   applyTextFormats_(ss, report);
   recoverMangledCells_(ss, report);
+  stampSchemaVersion_(ss, report);
 
   var body = report.length
     ? report.join('\n')
     : 'Already up to date — nothing to migrate.';
+  // Leave a persistent, attributable record of the run. `report` is the
+  // before/after diff; the Sheet's own version history captures the rest.
+  logActivity(ss, 'Ran migrate() — ' +
+    (report.length ? report.length + ' change(s)' : 'no changes') +
+    ' (schema v' + SCHEMA_VERSION + ')', 'system');
   var msg = 'The Good Egg migration complete.\n\n' + body +
             '\n\nThis function is idempotent — re-run it any time after a Code.gs update.';
   showResult_(msg);
+}
+
+// Stamp the current SCHEMA_VERSION into config so a Sheet's schema level is
+// auditable, and so a future migrate() can branch on where it's starting from.
+function stampSchemaVersion_(ss, report) {
+  var prev = readConfig(ss, 'schemaVersion');
+  if (String(prev) === String(SCHEMA_VERSION)) return;
+  writeConfig(ss, 'schemaVersion', SCHEMA_VERSION);
+  report.push('• Schema version ' + (prev ? prev + ' → ' + SCHEMA_VERSION : 'stamped at ' + SCHEMA_VERSION));
 }
 
 // Show a result either as a UI alert (when the sheet is open in a tab and
