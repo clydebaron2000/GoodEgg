@@ -1,0 +1,2081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="The Good Egg">
+<meta name="theme-color" content="#6B4226">
+<meta name="build-version" content="8c285506dfb33b9195097ef3ac9b1fe817bc81b1">
+<title>The Good Egg – Farm Fresh Eggs</title>
+<meta name="description" content="Tracking your farm fresh eggs — inventory, pricing, and orders for The Good Egg farm.">
+<link rel="icon" type="image/jpeg" href="logo.jpg">
+<link rel="apple-touch-icon" href="logo.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/tabler-icons.min.css">
+<style>
+  :root {
+    /* THE GOOD EGG — Brand palette
+       Brown = primary brand (the "THE / EGG" letters, tagline);
+       Mustard yellow = accent (the "GOOD" letters);
+       Cream/ivory = warm canvas (egg-white tones).               */
+
+    /* Primary brown ramp */
+    --brown-900: #3D1F0E;
+    --brown-800: #5C3520;
+    --brown-700: #6B4226;   /* main brand brown — top nav, primary buttons */
+    --brown-600: #8B5A3C;
+    --brown-100: #E8D5BC;
+    --brown-50:  #F5E6D3;
+
+    /* Mustard/golden yellow accent ("GOOD" letters in the logo) */
+    --yellow-700: #B88A2E;
+    --yellow-500: #E8B95A;  /* the accent — chips, callouts, focus rings */
+    --yellow-300: #F4D78A;
+    --yellow-100: #FAEEC9;
+
+    /* Status trio — earth-tone analogues that share brown's warm undertone.
+       Picked for color-theory harmony with the brand: each is in the same
+       warm quadrant as #6B4226 (yellow-green / golden-ochre / terracotta)
+       so the indicators read as semantically distinct without clashing
+       with the rest of the palette. */
+    --sage-800:  #4F6128;   /* In stock / good — warm olive */
+    --sage-50:   #E5ECCC;
+    --amber-800: #7A4D14;   /* Low stock / warning — rich ochre */
+    --amber-50:  #F7E4C3;
+    --red-800:   #7A2E1F;   /* Out of stock / danger — warm terracotta */
+    --red-50:    #F5D5C5;
+
+    /* Surfaces */
+    --gray-bg:   #FBF6E9;   /* page background (warm cream) */
+    --card-bg:   #FFFCF5;   /* card surface (ivory) */
+
+    /* Text */
+    --text-pri:  #2C1810;
+    --text-sec:  #6B4F3F;
+    --text-ter:  #9E8475;
+    --border:    rgba(76,46,22,0.15);
+    --border-med:rgba(76,46,22,0.28);
+
+    /* Radii / shadow — unchanged */
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 18px;
+    --shadow:    0 2px 12px rgba(76,46,22,0.10);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--gray-bg);
+    color: var(--text-pri);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── APP SHELL ── */
+  #app { display: flex; flex-direction: column; min-height: 100vh; max-width: 480px; margin: 0 auto; }
+
+  /* ── TOP NAV ── */
+  .top-nav {
+    background: var(--brown-700);
+    padding: 14px 20px 12px;
+    display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .top-nav .brand { display: flex; align-items: center; gap: 10px; flex: 1; }
+  .top-nav .logo-icon {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: #FFFCF5;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .top-nav .logo-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .top-nav .brand-text .app-name { font-family: 'DM Serif Display', serif; font-size: 20px; color: #fff; line-height: 1; }
+  .top-nav .brand-text .app-name .brand-accent { color: var(--yellow-300); }
+  .top-nav .brand-text .app-sub  { font-size: 11px; color: rgba(255,255,255,0.65); margin-top: 1px; }
+  .top-nav .mode-btns { display: flex; gap: 6px; }
+  .mode-btn {
+    padding: 5px 12px; border-radius: 20px; border: 1.5px solid rgba(255,255,255,0.35);
+    font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 500;
+    color: rgba(255,255,255,0.75); background: transparent; cursor: pointer; transition: all .2s;
+  }
+  .mode-btn.active { background: #fff; color: var(--brown-800); border-color: #fff; }
+
+  /* ── SYNC STATUS ── */
+  .sync-bar {
+    background: var(--brown-800); color: rgba(255,255,255,0.8);
+    font-size: 11px; text-align: center; padding: 4px 16px;
+    display: none; align-items: center; justify-content: center; gap: 6px;
+  }
+  .sync-bar.visible { display: flex; }
+  .sync-bar.error   { background: var(--red-800); }
+  .sync-dot { width: 6px; height: 6px; border-radius: 50%; background: #86efac; flex-shrink: 0; }
+  .sync-dot.spinning { background: transparent; border: 1.5px solid rgba(255,255,255,0.5); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+
+  /* ── TABS ── */
+  .tab-bar {
+    background: var(--card-bg); border-bottom: 1px solid var(--border);
+    display: flex; padding: 0 8px;
+    position: sticky; top: 62px; z-index: 90;
+  }
+  .tab-btn {
+    flex: 1; padding: 12px 4px; border: none; background: transparent;
+    font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 500;
+    color: var(--text-sec); cursor: pointer; display: flex; flex-direction: column;
+    align-items: center; gap: 3px; border-bottom: 2.5px solid transparent;
+    transition: all .2s;
+  }
+  .tab-btn i { font-size: 20px; }
+  .tab-btn.active { color: var(--brown-700); border-bottom-color: var(--yellow-500); }
+
+  /* ── SCROLL BODY ── */
+  .page { display: none; padding: 16px; flex: 1; }
+  .page.active { display: block; }
+
+  /* ── CARDS ── */
+  .card {
+    background: var(--card-bg); border-radius: var(--radius-lg);
+    border: 1px solid var(--border); padding: 16px 18px;
+    margin-bottom: 14px; box-shadow: var(--shadow);
+  }
+  .card-title {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text-sec);
+    display: flex; align-items: center; gap: 6px; margin-bottom: 14px;
+  }
+  .card-title i { font-size: 16px; color: var(--brown-700); }
+
+  /* ── METRICS ── */
+  .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .metric-card {
+    background: var(--brown-50); border-radius: var(--radius-md);
+    padding: 14px; text-align: center;
+  }
+  .metric-val   { font-family: 'DM Serif Display', serif; font-size: 30px; color: var(--brown-800); line-height: 1; }
+  .metric-label { font-size: 11px; color: var(--brown-800); opacity: .7; margin-top: 4px; font-weight: 500; }
+  .metric-sub   { font-size: 10px; color: var(--text-ter); margin-top: 2px; }
+
+  /* ── INVENTORY TABLE ── */
+  .inv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .inv-table th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-ter); padding: 0 6px 8px; border-bottom: 1px solid var(--border); }
+  .inv-table td { padding: 10px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .inv-table tr:last-child td { border-bottom: none; }
+  .inv-table .size-name  { font-weight: 600; font-size: 14px; }
+  .inv-table .tray-count { font-family: 'DM Serif Display', serif; font-size: 20px; color: var(--brown-700); }
+
+  /* ── BADGES ── */
+  .badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge-good { background: var(--sage-50);   color: var(--sage-800); }
+  .badge-low  { background: var(--amber-50);  color: var(--amber-800); }
+  .badge-out  { background: var(--red-50);    color: var(--red-800); }
+
+  /* ── FORMS ── */
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-sec); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+  .field input, .field select, .field textarea {
+    width: 100%; padding: 11px 14px; border: 1.5px solid var(--border-med);
+    border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif;
+    font-size: 14px; background: #fff; color: var(--text-pri);
+    transition: border-color .2s; outline: none;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--brown-700); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  /* ── BUTTONS ── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 11px 20px; border-radius: var(--radius-sm);
+    font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all .15s; border: none;
+  }
+  .btn-primary { background: var(--brown-700); color: #fff; }
+  .btn-primary:hover { background: var(--brown-800); }
+  .btn-outline { background: transparent; color: var(--brown-700); border: 1.5px solid var(--brown-700); }
+  .btn-outline:hover { background: var(--brown-50); }
+  .btn-danger  { background: var(--red-50); color: var(--red-800); }
+  .btn-danger:hover { background: #f7c1c1; }
+  .btn-sm   { padding: 7px 14px; font-size: 12px; }
+  .btn-full { width: 100%; justify-content: center; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ── FILTER CHIPS ── */
+  .filter-chip {
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text-sec);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .filter-chip:hover { background: var(--gray-bg); }
+  .filter-chip.active {
+    background: var(--yellow-500);
+    color: var(--brown-900);
+    border-color: var(--yellow-700);
+  }
+
+  /* ── STATUS SEGMENTED CONTROL (order cards) ── */
+  .status-segment {
+    display: flex;
+    gap: 2px;
+    background: var(--gray-bg);
+    padding: 3px;
+    border-radius: 8px;
+    flex: 1;
+  }
+  .status-segment button {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-sec);
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .status-segment button:hover:not(.current) { color: var(--brown-700); }
+  .status-segment button.current {
+    background: #fff;
+    color: var(--brown-700);
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    cursor: default;
+  }
+
+  /* ── PRICE TABLE ── */
+  .price-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .price-row:last-child { border-bottom: none; }
+  .price-size  { flex: 1; font-weight: 600; font-size: 15px; }
+  .price-per   { font-size: 11px; color: var(--text-ter); }
+  .price-input { width: 100px; padding: 8px 10px; border: 1.5px solid var(--border-med); border-radius: var(--radius-sm); font-family: 'DM Serif Display', serif; font-size: 18px; text-align: right; outline: none; }
+  .price-input:focus { border-color: var(--brown-700); }
+
+  /* ── ORDERS ── */
+  .order-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px; margin-bottom: 10px; }
+  .order-name   { font-weight: 600; font-size: 15px; }
+  .order-detail { font-size: 13px; color: var(--text-sec); margin-top: 3px; display: flex; align-items: center; gap: 5px; }
+  .order-detail i { font-size: 14px; color: var(--text-ter); }
+  .order-size-badge { font-size: 12px; font-weight: 600; color: var(--brown-800); background: var(--brown-50); padding: 3px 10px; border-radius: 20px; }
+  .order-meta    { font-size: 11px; color: var(--text-ter); margin-top: 6px; }
+  .order-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+  /* ── STATUS BANNER ── */
+  .status-banner {
+    background: var(--brown-50); border: 1px solid var(--brown-100);
+    border-radius: var(--radius-md); padding: 12px 16px;
+    display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+    font-size: 13px; color: var(--brown-800); font-weight: 500;
+  }
+  .status-banner i { font-size: 18px; color: var(--brown-700); }
+
+  /* ── TOAST ── */
+  .toast {
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--brown-800); color: #fff;
+    padding: 12px 20px; border-radius: var(--radius-md);
+    font-size: 14px; font-weight: 500; opacity: 0;
+    transition: all .3s; pointer-events: none; z-index: 999;
+    white-space: nowrap; box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error-toast { background: var(--red-800); }
+
+  /* ── EMPTY STATE ── */
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--text-ter); }
+  .empty-state i { font-size: 40px; display: block; margin-bottom: 10px; }
+  .empty-state p { font-size: 14px; }
+
+  /* ── LOADING ── */
+  .loading { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 20px; color: var(--text-sec); font-size: 13px; }
+  .spinner { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--brown-700); border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── MODAL ── */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.45); align-items: flex-end; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: var(--card-bg); border-radius: 20px 20px 0 0;
+    padding: 24px 20px 36px; width: 100%; max-width: 480px;
+    animation: slideUp .25s ease;
+  }
+  @keyframes slideUp { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  .modal-title   { font-family: 'DM Serif Display', serif; font-size: 20px; margin-bottom: 16px; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 16px; }
+  .modal-actions .btn { flex: 1; justify-content: center; }
+
+  /* ── SECTION LABEL ── */
+  .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--text-ter); margin: 18px 0 10px; }
+
+  /* ── ADMIN PIN ── */
+  .pin-screen {
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; padding: 40px 24px;
+    background: var(--gray-bg);
+  }
+  .pin-logo-img { width: 160px; height: 160px; object-fit: contain; margin-bottom: 8px; }
+  .pin-logo { font-family: 'DM Serif Display', serif; font-size: 28px; color: var(--brown-700); margin-bottom: 4px; }
+  .pin-sub  { font-size: 14px; color: var(--text-sec); margin-bottom: 20px; }
+  .pin-as   { font-size: 13px; color: var(--text-sec); margin-bottom: 6px; }
+  .pin-as strong { color: var(--brown-800); font-weight: 600; }
+  .admin-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+  .admin-btn {
+    padding: 14px 18px; border-radius: 12px;
+    border: 1px solid var(--border-med); background: var(--card-bg);
+    color: var(--brown-800); font-family: 'DM Sans', sans-serif;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+    transition: background .12s, transform .12s;
+    display: flex; align-items: center; gap: 12px;
+    text-align: left;
+  }
+  .admin-btn:hover  { background: var(--brown-50); }
+  .admin-btn:active { transform: scale(0.98); }
+  .admin-btn i      { font-size: 20px; color: var(--brown-600); }
+
+  /* PWA update banner — appears when a newer service worker is installed
+     and waiting. Lives at the bottom so it doesn't fight the top nav. */
+  .update-banner {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: var(--yellow-500); color: var(--brown-900);
+    padding: 12px 16px;
+    display: none;
+    align-items: center; gap: 12px;
+    box-shadow: 0 -2px 16px rgba(76,46,22,.18);
+    z-index: 1000;
+    font-size: 14px; font-weight: 600;
+  }
+  .update-banner.visible { display: flex; }
+  .update-banner i { font-size: 18px; }
+  .update-banner .msg { flex: 1; line-height: 1.3; }
+  .update-banner .msg small { display: block; font-weight: 500; font-size: 11px; color: var(--brown-700); margin-top: 2px; }
+  .update-banner button {
+    border: none; cursor: pointer; font-weight: 700; font-size: 13px;
+    padding: 8px 14px; border-radius: 8px;
+    background: var(--brown-800); color: var(--yellow-300);
+    transition: background .15s;
+  }
+  .update-banner button:hover  { background: var(--brown-900); }
+  .update-banner .dismiss      { background: transparent; color: var(--brown-800); padding: 8px 8px; }
+  .update-banner .dismiss:hover{ background: rgba(0,0,0,.06); }
+  .pin-dots { display: flex; gap: 12px; justify-content: center; margin: 20px 0; }
+  .pin-dot  { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--brown-600); background: transparent; transition: background .15s; }
+  .pin-dot.filled { background: var(--brown-700); border-color: var(--brown-700); }
+  .pin-pad  { display: grid; grid-template-columns: repeat(3, 72px); gap: 12px; justify-content: center; }
+  .pin-key {
+    width: 72px; height: 72px; border-radius: 50%; border: 1.5px solid var(--border-med);
+    background: var(--card-bg); font-family: 'DM Sans', sans-serif;
+    font-size: 22px; font-weight: 500; color: var(--text-pri);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--shadow); transition: all .12s;
+  }
+  .pin-key:active  { background: var(--brown-50); transform: scale(.94); }
+  .pin-key:disabled { opacity: .4; cursor: not-allowed; }
+  .pin-error { color: var(--red-800); font-size: 13px; text-align: center; margin-top: 8px; min-height: 18px; }
+
+  /* ── ACTIVITY LOG ── */
+  .activity-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-text { color: var(--text-pri); flex: 1; }
+  .activity-time { font-size: 11px; color: var(--text-ter); margin-left: 10px; white-space: nowrap; }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 360px) { .row2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<!-- PIN SCREEN — two-step: pick admin, then enter their PIN -->
+<div id="pin-screen" class="pin-screen" style="display:none;">
+  <img src="logo.jpg" alt="The Good Egg" class="pin-logo-img">
+  <div class="pin-sub">Tracking your farm fresh eggs</div>
+
+  <!-- Step 1: pick username -->
+  <div id="admin-selector" style="display:flex;flex-direction:column;align-items:center;width:100%;max-width:300px;">
+    <div class="pin-sub" style="margin-bottom:10px;margin-top:8px;">Sign in as</div>
+    <div id="admin-list" class="admin-list"></div>
+  </div>
+
+  <!-- Step 2: enter that username's numeric password -->
+  <div id="pin-entry" style="display:none;flex-direction:column;align-items:center;">
+    <div class="pin-as">Signing in as <strong id="pin-as-name"></strong></div>
+    <div class="pin-dots" id="pin-dots">
+      <div class="pin-dot" id="dot0"></div>
+      <div class="pin-dot" id="dot1"></div>
+      <div class="pin-dot" id="dot2"></div>
+      <div class="pin-dot" id="dot3"></div>
+    </div>
+    <div class="pin-pad" id="pin-pad">
+      <button class="pin-key" onclick="pinPress('1')">1</button>
+      <button class="pin-key" onclick="pinPress('2')">2</button>
+      <button class="pin-key" onclick="pinPress('3')">3</button>
+      <button class="pin-key" onclick="pinPress('4')">4</button>
+      <button class="pin-key" onclick="pinPress('5')">5</button>
+      <button class="pin-key" onclick="pinPress('6')">6</button>
+      <button class="pin-key" onclick="pinPress('7')">7</button>
+      <button class="pin-key" onclick="pinPress('8')">8</button>
+      <button class="pin-key" onclick="pinPress('9')">9</button>
+      <button class="pin-key" onclick="pinClear()" style="font-size:14px;color:var(--text-sec)"><i class="ti ti-rotate-left"></i></button>
+      <button class="pin-key" onclick="pinPress('0')">0</button>
+      <button class="pin-key" onclick="pinBack()"  style="font-size:14px;color:var(--text-sec)"><i class="ti ti-backspace"></i></button>
+    </div>
+    <div class="pin-error" id="pin-error"></div>
+    <button class="btn btn-outline btn-sm" style="margin-top:14px;" onclick="backToAdminPick()"><i class="ti ti-arrow-left"></i>Choose different admin</button>
+  </div>
+
+  <button class="btn btn-outline" style="margin-top:24px;" onclick="cancelPin()">Cancel</button>
+</div>
+
+<!-- MAIN APP -->
+<div id="app" style="display:none;">
+  <nav class="top-nav">
+    <div class="brand">
+      <div class="logo-icon"><img src="logo.jpg" alt="The Good Egg logo"></div>
+      <div class="brand-text">
+        <div class="app-name">The <span class="brand-accent">Good</span> Egg</div>
+        <div class="app-sub">
+          <span id="current-admin-label" style="color:var(--yellow-300);font-weight:600;"></span>
+          <span id="current-admin-sep" style="display:none;"> · </span>
+          Farm Fresh Eggs
+        </div>
+      </div>
+    </div>
+    <div class="mode-btns">
+      <button class="mode-btn active" id="btn-view"  onclick="setMode('view')">View</button>
+      <button class="mode-btn"        id="btn-admin" onclick="tryAdmin()">Admin</button>
+    </div>
+  </nav>
+
+  <!-- Sync status bar -->
+  <div class="sync-bar" id="sync-bar">
+    <div class="sync-dot" id="sync-dot"></div>
+    <span id="sync-text">Syncing…</span>
+  </div>
+
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('inventory')" id="tab-inventory">
+      <i class="ti ti-box"></i>Inventory
+    </button>
+    <button class="tab-btn" onclick="switchTab('pricing')" id="tab-pricing">
+      <i class="ti ti-tag"></i>Pricing
+    </button>
+    <button class="tab-btn" onclick="switchTab('orders')" id="tab-orders">
+      <i class="ti ti-clipboard-list"></i>Orders
+    </button>
+    <button class="tab-btn" onclick="switchTab('reserve')" id="tab-reserve">
+      <i class="ti ti-plus-circle"></i>Reserve
+    </button>
+  </div>
+
+  <!-- ─── INVENTORY PAGE ─── -->
+  <div class="page active" id="page-inventory">
+    <div class="metrics-grid" id="metrics-grid"></div>
+    <div class="card">
+      <div class="card-title"><i class="ti ti-layout-grid"></i>Stock by size</div>
+      <table class="inv-table">
+        <thead><tr><th>Size</th><th>Trays</th><th>Eggs</th><th>Status</th></tr></thead>
+        <tbody id="stock-tbody"></tbody>
+      </table>
+    </div>
+    <div id="admin-inventory-section" style="display:none;">
+      <div class="card">
+        <div class="card-title"><i class="ti ti-egg"></i>Egg sizes</div>
+        <p style="font-size:13px;color:var(--text-sec);margin-bottom:12px;">
+          Add or remove the egg types this farm tracks. Deleting a size removes its stock count, current price, and excludes it from new orders. Existing orders for a deleted size are kept but show the raw key.
+        </p>
+        <div id="size-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;"></div>
+        <div class="row2">
+          <div class="field">
+            <label>Key (lowercase, no spaces)</label>
+            <input type="text" id="new-size-key" placeholder="e.g. extra-large" maxlength="32" />
+          </div>
+          <div class="field">
+            <label>Display label</label>
+            <input type="text" id="new-size-label" placeholder="e.g. Extra Large" maxlength="48" />
+          </div>
+        </div>
+        <button class="btn btn-primary" id="btn-add-size" onclick="addSize()"><i class="ti ti-plus"></i>Add egg size</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><i class="ti ti-circle-plus"></i>Collect today's eggs</div>
+        <div class="row2">
+          <div class="field">
+            <label>Size</label>
+            <select id="add-size"></select>
+          </div>
+          <div class="field">
+            <label>Trays to add</label>
+            <input type="number" id="add-trays" min="1" placeholder="e.g. 10">
+          </div>
+        </div>
+        <div class="field">
+          <label>Note (optional)</label>
+          <input type="text" id="add-note" placeholder="e.g. Morning collection">
+        </div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn btn-primary" id="btn-add-stock" onclick="addStock()"><i class="ti ti-plus"></i>Add trays</button>
+          <button class="btn btn-outline" id="btn-deduct"    onclick="promptDeduct()"><i class="ti ti-minus"></i>Mark a sale</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="admin-people-card" style="display:none;">
+      <div class="card-title"><i class="ti ti-users"></i>Admins</div>
+      <p style="font-size:13px;color:var(--text-sec);margin-bottom:12px;">
+        Each admin signs in with a <strong>username</strong> (anything they want — pick something the team will recognize) and a <strong>numeric password</strong>. Activity entries show who did what. Onboard a new admin here or from the Apps Script editor with <code>addAdminInteractive</code>.
+      </p>
+      <div id="admin-people-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;"></div>
+      <div class="row2">
+        <div class="field">
+          <label>New admin username</label>
+          <input type="text" id="new-admin-name" placeholder="e.g. sara" maxlength="48" />
+        </div>
+        <div class="field">
+          <label>Numeric password (4–8 digits)</label>
+          <input type="text" id="new-admin-pin" placeholder="e.g. 4729" inputmode="numeric" pattern="\d{4,8}" maxlength="8" />
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btn-add-admin" onclick="addAdminFromUI()"><i class="ti ti-user-plus"></i>Add admin</button>
+    </div>
+
+    <div class="card" id="admin-pin-card" style="display:none;">
+      <div class="card-title"><i class="ti ti-lock"></i>Security</div>
+      <p style="font-size:13px;color:var(--text-sec);margin-bottom:12px;">Change your own numeric password. Only affects the admin currently signed in.</p>
+      <button class="btn btn-outline" onclick="openModal('change-pin-modal');newPinBuffer='';updateNewPinDots();">
+        <i class="ti ti-lock-open"></i>Change my password
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><i class="ti ti-history"></i>Recent activity</div>
+      <div id="activity-log"></div>
+    </div>
+  </div>
+
+  <!-- ─── PRICING PAGE ─── -->
+  <div class="page" id="page-pricing">
+    <div class="status-banner">
+      <i class="ti ti-info-circle"></i>
+      <span>Prices are visible to everyone. Only admins can edit.</span>
+    </div>
+    <div class="card">
+      <div class="card-title"><i class="ti ti-tag"></i>Egg prices per tray</div>
+      <div id="price-rows"></div>
+      <div id="admin-price-save" style="display:none; margin-top:14px;">
+        <button class="btn btn-primary btn-full" id="btn-save-prices" onclick="savePrices()">
+          <i class="ti ti-device-floppy"></i>Save prices
+        </button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><i class="ti ti-chart-bar"></i>Inventory value estimate</div>
+      <div id="value-grid" class="metrics-grid"></div>
+    </div>
+  </div>
+
+  <!-- ─── ORDERS PAGE ─── -->
+  <div class="page" id="page-orders">
+    <div class="card" id="order-filters-card">
+      <div class="card-title"><i class="ti ti-filter"></i>Filter orders</div>
+      <input type="search" id="order-search" placeholder="Search name, contact, address, notes…"
+             oninput="setOrderSearch(this.value)"
+             style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:10px;" />
+      <div class="filter-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+        <button type="button" class="filter-chip" data-status="pending"   onclick="toggleStatusFilter('pending')">Pending</button>
+        <button type="button" class="filter-chip" data-status="confirmed" onclick="toggleStatusFilter('confirmed')">Confirmed</button>
+        <button type="button" class="filter-chip" data-status="done"      onclick="toggleStatusFilter('done')">Done</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select id="order-time" onchange="setOrderTimeRange(this.value)"
+                style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff;">
+          <option value="all">All time</option>
+          <option value="today">Today</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+        </select>
+        <select id="order-limit" onchange="setOrderLimit(this.value)"
+                style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff;">
+          <option value="25">Show 25</option>
+          <option value="50" selected>Show 50</option>
+          <option value="100">Show 100</option>
+          <option value="all">Show all</option>
+        </select>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="resetOrderFilters()" style="margin-left:auto;">
+          <i class="ti ti-refresh"></i>Reset
+        </button>
+      </div>
+      <div id="order-count-label" style="font-size:12px;color:var(--text-sec);margin-top:10px;"></div>
+    </div>
+    <div id="orders-container"></div>
+  </div>
+
+  <!-- ─── RESERVE PAGE ─── -->
+  <div class="page" id="page-reserve">
+    <div class="card">
+      <div class="card-title"><i class="ti ti-clipboard-plus"></i>Place your egg order</div>
+      <div class="field">
+        <label>Your full name</label>
+        <input type="text" id="res-name" placeholder="e.g. Maria Santos">
+      </div>
+      <div class="field">
+        <label>Contact number</label>
+        <input type="tel" id="res-contact" placeholder="e.g. 09171234567">
+      </div>
+      <div class="field">
+        <label>Delivery address / barangay</label>
+        <input type="text" id="res-address" placeholder="e.g. Brgy. Obrero, Butuan City">
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Egg size</label>
+          <select id="res-size"></select>
+        </div>
+        <div class="field">
+          <label>Number of trays</label>
+          <input type="number" id="res-trays" min="1" placeholder="e.g. 2">
+        </div>
+      </div>
+      <div class="field">
+        <label>Notes (optional)</label>
+        <input type="text" id="res-notes" placeholder="e.g. Please call before delivery">
+      </div>
+      <button class="btn btn-primary btn-full" id="btn-submit-order" onclick="submitOrder()">
+        <i class="ti ti-send"></i>Submit order
+      </button>
+    </div>
+    <div class="card" style="background:var(--brown-50);border-color:var(--brown-100);">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <i class="ti ti-clock" style="font-size:22px;color:var(--brown-700);"></i>
+        <div>
+          <div style="font-weight:600;font-size:14px;color:var(--brown-800);">Order confirmation</div>
+          <div style="font-size:13px;color:var(--brown-800);opacity:.75;margin-top:2px;">We will contact you to confirm your order and arrange delivery.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DEDUCT MODAL -->
+<div class="modal-overlay" id="deduct-modal">
+  <div class="modal-box">
+    <div class="modal-title">Mark a sale</div>
+    <div class="row2">
+      <div class="field">
+        <label>Size</label>
+        <select id="deduct-size"></select>
+      </div>
+      <div class="field">
+        <label>Trays sold</label>
+        <input type="number" id="deduct-trays" min="1" placeholder="e.g. 5">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('deduct-modal')">Cancel</button>
+      <button class="btn btn-primary" id="btn-confirm-deduct" onclick="deductStock()"><i class="ti ti-check"></i>Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- CHANGE PIN MODAL -->
+<div class="modal-overlay" id="change-pin-modal">
+  <div class="modal-box">
+    <div class="modal-title">Change my password</div>
+    <p style="font-size:13px;color:var(--text-sec);margin-bottom:16px;">Enter a new 4-digit numeric password using the keypad below.</p>
+    <div class="pin-dots" id="newpin-dots" style="justify-content:flex-start;gap:10px;margin-bottom:16px;">
+      <div class="pin-dot" id="ndot0"></div>
+      <div class="pin-dot" id="ndot1"></div>
+      <div class="pin-dot" id="ndot2"></div>
+      <div class="pin-dot" id="ndot3"></div>
+    </div>
+    <div class="pin-pad" style="margin-bottom:12px;">
+      <button class="pin-key" onclick="newPinPress('1')">1</button>
+      <button class="pin-key" onclick="newPinPress('2')">2</button>
+      <button class="pin-key" onclick="newPinPress('3')">3</button>
+      <button class="pin-key" onclick="newPinPress('4')">4</button>
+      <button class="pin-key" onclick="newPinPress('5')">5</button>
+      <button class="pin-key" onclick="newPinPress('6')">6</button>
+      <button class="pin-key" onclick="newPinPress('7')">7</button>
+      <button class="pin-key" onclick="newPinPress('8')">8</button>
+      <button class="pin-key" onclick="newPinPress('9')">9</button>
+      <button class="pin-key" onclick="newPinClear()" style="font-size:14px;color:var(--text-sec)"><i class="ti ti-rotate-left"></i></button>
+      <button class="pin-key" onclick="newPinPress('0')">0</button>
+      <button class="pin-key" onclick="newPinBack()"  style="font-size:14px;color:var(--text-sec)"><i class="ti ti-backspace"></i></button>
+    </div>
+    <div class="pin-error" id="newpin-error"></div>
+    <div class="modal-actions" style="margin-top:8px;">
+      <button class="btn btn-outline" onclick="closeModal('change-pin-modal');newPinBuffer='';">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════
+// CONFIG — paste your deployed Apps Script URL here
+// ═══════════════════════════════════════════════
+const SCRIPT_URL   = 'https://script.google.com/macros/s/AKfycbwQOXXvSvKk5a0QjR9IA96M7OAX8EqD5EkkGkzp9DtzXzEAK0lzPPOwRqZ52IWOxWGh4A/exec';
+const EGGS_PER_TRAY = 30;
+// SIZE_ORDER and SIZE_LABELS are now derived from state.sizes (the `sizes`
+// sheet) and refreshed on every applyState. The literals below are just
+// the placeholder values used before the first server fetch resolves.
+let SIZE_ORDER  = ['small','medium','large','xl','jumbo'];
+let SIZE_LABELS = { small:'Small', medium:'Medium', large:'Large', xl:'XL', jumbo:'Jumbo' };
+const POLL_INTERVAL = 30000; // refresh every 30 seconds
+
+// ═══════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════
+let state = {
+  admins:      [],   // [{id, name, createdAt}] — public admin list
+  sizes:       [],   // [{key, label, sortOrder}] — canonical egg types
+  stock:       { small:0, medium:0, large:0, xl:0, jumbo:0 },
+  prices:      { small:120, medium:140, large:160, xl:175, jumbo:180 },
+  orders:      [],
+  activity:    [],
+  stockEvents: [],   // structured restock/sale log (for analytics)
+  priceEvents: []    // structured price-change log (for analytics)
+};
+let isAdmin         = false;
+let pinBuffer       = '';
+let adminPinHash    = null;       // hashed PIN held in memory after successful login
+let currentAdmin    = null;       // { id, name } of the logged-in admin (set from server response)
+let pendingAdminId  = null;       // admin selected on the PIN screen, before PIN entry
+
+// Multi-admin feature flag — defaults OFF for A/B testing on production.
+// Enable per-device by either:
+//   1. Appending ?multiAdmin=1 to the URL (sticky for the session)
+//   2. Running localStorage.setItem('good-egg-multi-admin','1') in DevTools
+// When OFF: PIN screen is a single keypad (legacy UI). The server's bwd-compat
+// layer still attributes activity to the matching admin so the audit trail is
+// correct; the user just doesn't pick a username first.
+const MULTI_ADMIN_ENABLED =
+  (new URLSearchParams(location.search).get('multiAdmin') === '1') ||
+  (typeof localStorage !== 'undefined' && localStorage.getItem('good-egg-multi-admin') === '1');
+if (MULTI_ADMIN_ENABLED && new URLSearchParams(location.search).get('multiAdmin') === '1') {
+  // URL param wins — persist it so reloads (incl. SW updates) keep the mode
+  try { localStorage.setItem('good-egg-multi-admin', '1'); } catch (e) {}
+}
+let pendingOrderId  = null;  // UUID generated per order form, for dedup
+let pollTimer       = null;
+let inFlightActions = 0;     // > 0 → polling pauses so it doesn't clobber optimistic updates
+let orderFilters = {
+  search:   '',
+  statuses: { pending: true, confirmed: true, done: false },
+  timeRange:'all',           // 'today' | '7d' | '30d' | 'all'
+  limit:    50               // 25 | 50 | 100 | Infinity
+};
+
+// ═══════════════════════════════════════════════
+// TIME FORMATTING
+// ═══════════════════════════════════════════════
+// All timestamps are stored as epoch ms server-side. Format on the
+// client using the user's local timezone so people see times in their
+// own clock. If the browser's locale data doesn't include a TZ name,
+// Intl falls back to a "GMT±N" offset string — same effect: the value
+// is never ambiguous.
+function formatTime(epoch) {
+  if (epoch == null) return null;
+  const ms = Number(epoch);
+  if (!isFinite(ms) || ms <= 0) return null;
+  try {
+    return new Date(ms).toLocaleString(undefined, {
+      month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short'
+    });
+  } catch (e) {
+    // Last-resort fallback for environments where Intl is broken.
+    return new Date(ms).toISOString().replace('T', ' ').replace('Z', ' UTC');
+  }
+}
+
+// ═══════════════════════════════════════════════
+// CRYPTO HELPERS
+// ═══════════════════════════════════════════════
+async function sha256(str) {
+  const buf  = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function generateUUID() {
+  // crypto.randomUUID() available in modern browsers; fallback below
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+// ═══════════════════════════════════════════════
+// API — Apps Script fetch helpers
+// ═══════════════════════════════════════════════
+// Content-Type: text/plain avoids a CORS preflight request.
+// Apps Script returns a 302 redirect; redirect:'follow' handles it.
+
+async function callScript(payload) {
+  const res = await fetch(SCRIPT_URL, {
+    method:   'POST',
+    headers:  { 'Content-Type': 'text/plain' },
+    body:     JSON.stringify(payload),
+    redirect: 'follow'
+  });
+  if (!res.ok) throw new Error('Network error ' + res.status);
+  return res.json();
+}
+
+async function fetchState() {
+  const res = await fetch(SCRIPT_URL + '?action=getState', { redirect: 'follow' });
+  if (!res.ok) throw new Error('Network error ' + res.status);
+  return res.json();
+}
+
+// ═══════════════════════════════════════════════
+// LOAD / SYNC
+// ═══════════════════════════════════════════════
+async function loadState() {
+  setSyncStatus('syncing');
+  try {
+    const data = await fetchState();
+    applyState(data);
+    setSyncStatus('ok');
+  } catch (e) {
+    setSyncStatus('error');
+    showToast('Could not reach server. Showing cached data.', true);
+  }
+}
+
+function applyState(data) {
+  if (data.admins)      state.admins      = data.admins;
+  if (data.sizes && data.sizes.length) {
+    state.sizes = data.sizes;
+    refreshSizeConstants();
+    populateSizeSelects();
+  }
+  if (data.stock)       state.stock       = data.stock;
+  if (data.prices)      state.prices      = data.prices;
+  if (data.orders)      state.orders      = data.orders;
+  if (data.activity)    state.activity    = data.activity;
+  if (data.stockEvents) state.stockEvents = data.stockEvents;
+  if (data.priceEvents) state.priceEvents = data.priceEvents;
+  renderAll();
+}
+
+// Refresh the SIZE_ORDER and SIZE_LABELS globals from state.sizes so
+// every renderer that already reads them automatically picks up runtime
+// changes (added / deleted sizes).
+function refreshSizeConstants() {
+  const sorted = state.sizes.slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  SIZE_ORDER  = sorted.map(s => s.key);
+  SIZE_LABELS = {};
+  sorted.forEach(s => { SIZE_LABELS[s.key] = s.label; });
+}
+
+// Formatted size mention for activity log messages — mirrors the
+// server's sizeMention_(). Returns: size "Extra Large"
+function sizeMention(key) {
+  return `size "${SIZE_LABELS[key] || key}"`;
+}
+
+// Repopulate every size dropdown from the current SIZE_ORDER. Preserves
+// the user's selected value when possible so a poll in the background
+// doesn't reset the form they're filling out.
+function populateSizeSelects() {
+  ['add-size','deduct-size','res-size'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const previous = sel.value;
+    sel.innerHTML = SIZE_ORDER
+      .map(k => `<option value="${k}">${SIZE_LABELS[k] || k}</option>`)
+      .join('');
+    if (SIZE_ORDER.includes(previous)) sel.value = previous;
+  });
+}
+
+// ── Optimistic-update helpers ─────────────────────────────────
+// snapshot() captures a deep copy of the state so we can roll back
+// if the server rejects an optimistically-applied change.
+function snapshot() {
+  return {
+    admins:   JSON.parse(JSON.stringify(state.admins)),
+    sizes:    JSON.parse(JSON.stringify(state.sizes)),
+    stock:    JSON.parse(JSON.stringify(state.stock)),
+    prices:   JSON.parse(JSON.stringify(state.prices)),
+    orders:   JSON.parse(JSON.stringify(state.orders)),
+    activity: JSON.parse(JSON.stringify(state.activity))
+  };
+}
+function restoreSnapshot(snap) {
+  state.admins   = snap.admins;
+  state.sizes    = snap.sizes;
+  state.stock    = snap.stock;
+  state.prices   = snap.prices;
+  state.orders   = snap.orders;
+  state.activity = snap.activity;
+  refreshSizeConstants();
+  populateSizeSelects();
+  renderAll();
+}
+function renderAll() { renderSizes(); renderInventory(); renderPricing(); renderOrders(); }
+function pushActivity(text) {
+  // Stamp with a real epoch so the activity row renders in the user's local
+  // timezone via formatTime(). When the server response lands it'll
+  // overwrite this entry with the canonical version (same createdAt).
+  state.activity.push({ action: text, createdAt: Date.now(), time: null });
+}
+
+// Format a deleted-order activity log entry. Mirrors describeDeletedOrder_
+// on the server so the optimistic line matches the canonical one.
+function describeDeletedOrder(o) {
+  const unit  = Number(o.unitPrice) || Number(state.prices[o.size]) || 0;
+  const trays = Number(o.trays) || 0;
+  const total = unit * trays;
+  const loc   = [o.contact, o.address].filter(Boolean).join(', ');
+  const placed = formatTime(o.createdAt) || o.time || 'unknown time';
+  const parts = [
+    `Deleted [${o.status || 'unknown'}] order:`,
+    o.name + (loc ? ` (${loc})` : ''),
+    `— ${trays} tray${trays === 1 ? '' : 's'} ${sizeMention(o.size)} @ ₱${unit} = ₱${total}`,
+    `— placed ${placed}`
+  ];
+  if (o.notes) parts.push(`— notes: "${o.notes}"`);
+  return parts.join(' ');
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    // Skip ticks while an admin/customer action is mid-flight. Otherwise
+    // the poll's response would overwrite the user's optimistic change
+    // for the brief window before the action's own response lands.
+    if (inFlightActions > 0) return;
+    try {
+      const data = await fetchState();
+      applyState(data);
+      setSyncStatus('ok');
+    } catch (e) {
+      setSyncStatus('error');
+    }
+  }, POLL_INTERVAL);
+}
+
+// Bump the counter around any action that mutates server state. While > 0,
+// the polling loop skips ticks so it can't overwrite an optimistic change.
+function actionStart() { inFlightActions++; }
+function actionEnd()   { inFlightActions = Math.max(0, inFlightActions - 1); }
+
+function setSyncStatus(status) {
+  const bar  = document.getElementById('sync-bar');
+  const dot  = document.getElementById('sync-dot');
+  const text = document.getElementById('sync-text');
+  if (status === 'ok') {
+    bar.className  = 'sync-bar';   // hide
+  } else if (status === 'syncing') {
+    bar.className  = 'sync-bar visible';
+    dot.className  = 'sync-dot spinning';
+    text.textContent = 'Syncing…';
+  } else {
+    bar.className  = 'sync-bar visible error';
+    dot.className  = 'sync-dot';
+    dot.style.background = '#fca5a5';
+    text.textContent = 'Could not sync — check connection';
+  }
+}
+
+// ═══════════════════════════════════════════════
+// MODE & AUTH
+// ═══════════════════════════════════════════════
+function tryAdmin() {
+  if (isAdmin) { setMode('view'); return; }
+  pinBuffer = '';
+  pendingAdminId = null;
+  updatePinDots();
+  document.getElementById('pin-error').textContent = '';
+  setPinPadDisabled(false);
+
+  if (MULTI_ADMIN_ENABLED && state.admins && state.admins.length > 0) {
+    // Multi-admin UI: pick username → enter password.
+    document.getElementById('admin-selector').style.display = 'flex';
+    document.getElementById('pin-entry').style.display     = 'none';
+    // Show the "Signing in as X" header + back button (may have been hidden by a previous legacy open)
+    const asLine = document.querySelector('#pin-entry .pin-as');
+    if (asLine) asLine.style.display = '';
+    const back = document.querySelector('#pin-entry .btn[onclick="backToAdminPick()"]');
+    if (back) back.style.display = '';
+    renderAdminPickList();
+  } else {
+    // Legacy UI: just the keypad. Server's bwd-compat resolves the admin
+    // from the pinHash (and attributes activity correctly behind the scenes).
+    document.getElementById('admin-selector').style.display = 'none';
+    document.getElementById('pin-entry').style.display     = 'flex';
+    // Hide the "Signing in as X" header — no name picked
+    const asLine = document.querySelector('#pin-entry .pin-as');
+    if (asLine) asLine.style.display = 'none';
+    // Hide the "Choose different admin" back button in legacy mode
+    const back = document.querySelector('#pin-entry .btn[onclick="backToAdminPick()"]');
+    if (back) back.style.display = 'none';
+  }
+  document.getElementById('pin-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+function renderAdminPickList() {
+  const list = document.getElementById('admin-list');
+  if (!state.admins || !state.admins.length) {
+    list.innerHTML = '<p style="text-align:center;color:var(--text-sec);font-size:13px;line-height:1.5;">No admins configured yet.<br>Run <code>setupSpreadsheet</code> or <code>migrate</code> in the Apps Script editor.</p>';
+    return;
+  }
+  list.innerHTML = state.admins
+    .map(a => `
+      <button class="admin-btn" onclick="pickAdmin('${a.id.replace(/'/g, "\\'")}')">
+        <i class="ti ti-user"></i>${escapeHtml(a.name)}
+      </button>`).join('');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function pickAdmin(id) {
+  const admin = state.admins.find(a => a.id === id);
+  if (!admin) return;
+  pendingAdminId = id;
+  document.getElementById('pin-as-name').textContent = admin.name;
+  document.getElementById('admin-selector').style.display = 'none';
+  document.getElementById('pin-entry').style.display     = 'flex';
+  pinBuffer = '';
+  updatePinDots();
+  setPinPadDisabled(false);
+  document.getElementById('pin-error').textContent = '';
+}
+
+function backToAdminPick() {
+  pendingAdminId = null;
+  pinBuffer = '';
+  document.getElementById('pin-error').textContent = '';
+  document.getElementById('pin-entry').style.display     = 'none';
+  document.getElementById('admin-selector').style.display = 'flex';
+}
+
+function setMode(mode) {
+  isAdmin = (mode === 'admin');
+  if (!isAdmin) { adminPinHash = null; currentAdmin = null; }
+  document.getElementById('btn-view').classList.toggle('active', !isAdmin);
+  document.getElementById('btn-admin').classList.toggle('active', isAdmin);
+  document.getElementById('btn-admin').textContent = isAdmin ? 'Logout' : 'Admin';
+  document.getElementById('admin-inventory-section').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('admin-price-save').style.display       = isAdmin ? 'block' : 'none';
+  document.getElementById('admin-pin-card').style.display         = isAdmin ? 'block' : 'none';
+  // Manage Admins card is a multi-admin feature — hidden in legacy UI mode.
+  document.getElementById('admin-people-card').style.display      = (isAdmin && MULTI_ADMIN_ENABLED) ? 'block' : 'none';
+  renderAdminPeople();
+  // Show the logged-in admin's name next to the brand
+  const whoEl = document.getElementById('current-admin-label');
+  const sepEl = document.getElementById('current-admin-sep');
+  if (whoEl) whoEl.textContent = isAdmin && currentAdmin ? currentAdmin.name : '';
+  if (sepEl) sepEl.style.display = isAdmin && currentAdmin ? 'inline' : 'none';
+  renderPricing();
+}
+
+function cancelPin() {
+  document.getElementById('pin-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+}
+
+function pinPress(d) {
+  if (pinBuffer.length >= 4) return;
+  pinBuffer += d;
+  updatePinDots();
+  if (pinBuffer.length === 4) {
+    setTimeout(() => verifyPin(pinBuffer), 150);
+  }
+}
+
+function pinBack()  { pinBuffer = pinBuffer.slice(0,-1); updatePinDots(); }
+function pinClear() { pinBuffer = ''; updatePinDots(); }
+
+async function verifyPin(pin) {
+  // Multi-admin UI requires pendingAdminId; legacy mode doesn't (server resolves).
+  if (MULTI_ADMIN_ENABLED && !pendingAdminId) return;
+  setPinPadDisabled(true);
+  document.getElementById('pin-error').textContent = '';
+  try {
+    const hash = await sha256(pin);
+    const payload = { action: 'verifyPIN', pinHash: hash };
+    if (pendingAdminId) payload.adminId = pendingAdminId;
+    const res = await callScript(payload);
+    if (res.success) {
+      adminPinHash = hash;
+      currentAdmin = res.admin || null;   // server attributes us; UI may or may not show name
+      document.getElementById('pin-screen').style.display = 'none';
+      document.getElementById('app').style.display = 'flex';
+      setMode('admin');
+      showToast(res.admin ? `Welcome, ${res.admin.name}` : 'Admin mode activated');
+    } else {
+      document.getElementById('pin-error').textContent = 'Incorrect password. Try again.';
+      pinBuffer = '';
+      updatePinDots();
+      setPinPadDisabled(false);
+    }
+  } catch (e) {
+    document.getElementById('pin-error').textContent = 'Could not reach server. Check connection.';
+    pinBuffer = '';
+    updatePinDots();
+    setPinPadDisabled(false);
+  }
+}
+
+function updatePinDots() {
+  for (let i = 0; i < 4; i++) {
+    document.getElementById('dot' + i).classList.toggle('filled', i < pinBuffer.length);
+  }
+}
+
+function setPinPadDisabled(disabled) {
+  document.querySelectorAll('#pin-pad .pin-key').forEach(k => k.disabled = disabled);
+}
+
+// ═══════════════════════════════════════════════
+// TABS
+// ═══════════════════════════════════════════════
+function switchTab(name) {
+  ['inventory','pricing','orders','reserve'].forEach(t => {
+    document.getElementById('page-' + t).classList.toggle('active', t === name);
+    document.getElementById('tab-'  + t).classList.toggle('active', t === name);
+  });
+  if (name === 'orders') renderOrders();
+  // Generate a fresh order UUID when the reserve tab is opened
+  if (name === 'reserve') pendingOrderId = generateUUID();
+}
+
+// ═══════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════
+function render() { renderInventory(); renderPricing(); }
+
+function getStatus(trays) {
+  if (trays === 0) return '<span class="badge badge-out">Out of stock</span>';
+  if (trays <= 5)  return '<span class="badge badge-low">Low stock</span>';
+  return '<span class="badge badge-good">In stock</span>';
+}
+
+// Admin-only list of egg sizes with delete buttons. Hidden when not admin
+// (its container lives inside #admin-inventory-section), but renderSizes
+// still runs so the DOM stays in sync.
+function renderSizes() {
+  const container = document.getElementById('size-list');
+  if (!container) return;
+  if (!state.sizes.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:14px;"><p style="font-size:13px;">No sizes configured yet — add one below.</p></div>';
+    return;
+  }
+  const sorted = state.sizes.slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  container.innerHTML = sorted.map(s => {
+    const trays = Number(state.stock[s.key])  || 0;
+    const price = Number(state.prices[s.key]) || 0;
+    const warn  = trays > 0;
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--gray-bg);border-radius:8px;">
+        <div style="min-width:0;flex:1;">
+          <div style="font-weight:600;font-size:14px;">${s.label}</div>
+          <div style="font-size:11px;color:var(--text-sec);font-family:ui-monospace,monospace;">
+            ${s.key} · ${trays} tray${trays === 1 ? '' : 's'} · ₱${price}/tray${warn ? ' · <span style="color:var(--amber-800);">⚠ has stock</span>' : ''}
+          </div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="deleteSize('${s.key}')" title="Delete this egg size">
+          <i class="ti ti-trash"></i>
+        </button>
+      </div>`;
+  }).join('');
+}
+
+function renderInventory() {
+  const total   = SIZE_ORDER.reduce((s,k) => s + (state.stock[k] || 0), 0);
+  const low     = SIZE_ORDER.filter(k => state.stock[k] > 0 && state.stock[k] <= 5).length;
+  const out     = SIZE_ORDER.filter(k => state.stock[k] === 0).length;
+  const pending = (state.orders || []).filter(o => o.status === 'pending').length;
+
+  document.getElementById('metrics-grid').innerHTML = `
+    <div class="metric-card">
+      <div class="metric-val">${total}</div>
+      <div class="metric-label">Total trays</div>
+      <div class="metric-sub">${total * EGGS_PER_TRAY} eggs est.</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-val">${pending}</div>
+      <div class="metric-label">Pending orders</div>
+      <div class="metric-sub">awaiting confirmation</div>
+    </div>
+    <div class="metric-card" style="${low > 0 ? 'background:var(--amber-50)' : ''}">
+      <div class="metric-val" style="${low > 0 ? 'color:var(--amber-800)' : ''}">${low}</div>
+      <div class="metric-label" style="${low > 0 ? 'color:var(--amber-800)' : ''}">Low stock sizes</div>
+    </div>
+    <div class="metric-card" style="${out > 0 ? 'background:var(--red-50)' : ''}">
+      <div class="metric-val" style="${out > 0 ? 'color:var(--red-800)' : ''}">${out}</div>
+      <div class="metric-label" style="${out > 0 ? 'color:var(--red-800)' : ''}">Out of stock</div>
+    </div>`;
+
+  document.getElementById('stock-tbody').innerHTML = SIZE_ORDER.map(k => `
+    <tr>
+      <td><span class="size-name">${SIZE_LABELS[k]}</span></td>
+      <td><span class="tray-count">${state.stock[k] || 0}</span></td>
+      <td>${(state.stock[k] || 0) * EGGS_PER_TRAY}</td>
+      <td>${getStatus(state.stock[k] || 0)}</td>
+    </tr>`).join('');
+
+  const log = (state.activity || []).slice(-10).reverse();
+  document.getElementById('activity-log').innerHTML = log.length === 0
+    ? '<div class="empty-state" style="padding:20px;"><i class="ti ti-notes" style="font-size:28px;color:var(--text-ter);display:block;margin-bottom:8px;"></i><p>Quiet farm. Activity shows here as eggs come in and orders go out.</p></div>'
+    : log.map(a => `
+      <div class="activity-item">
+        <span class="activity-text">
+          ${escapeHtml(a.action)}
+          ${a.actor ? `<span style="color:var(--text-ter);font-size:11px;"> · ${escapeHtml(a.actor)}</span>` : ''}
+        </span>
+        <span class="activity-time">${formatTime(a.createdAt) || a.time || ''}</span>
+      </div>`).join('');
+}
+
+function renderPricing() {
+  document.getElementById('price-rows').innerHTML = SIZE_ORDER.map(k => `
+    <div class="price-row">
+      <div>
+        <div class="price-size">${SIZE_LABELS[k]}</div>
+        <div class="price-per">${EGGS_PER_TRAY} eggs/tray · ₱${((state.prices[k] || 0)/EGGS_PER_TRAY).toFixed(2)}/egg</div>
+      </div>
+      ${isAdmin
+        ? `<input class="price-input" type="number" id="price-${k}" value="${state.prices[k] || 0}" min="0" />`
+        : `<span style="font-family:'DM Serif Display',serif;font-size:22px;color:var(--brown-700);">₱${state.prices[k] || 0}</span>`
+      }
+    </div>`).join('');
+
+  const valueItems = SIZE_ORDER.map(k => {
+    const val = (state.stock[k] || 0) * (state.prices[k] || 0);
+    return `<div class="metric-card"><div class="metric-val" style="font-size:20px;">₱${val.toLocaleString()}</div><div class="metric-label">${SIZE_LABELS[k]}</div><div class="metric-sub">${state.stock[k] || 0} trays</div></div>`;
+  }).join('');
+  const total = SIZE_ORDER.reduce((s,k) => s + (state.stock[k]||0) * (state.prices[k]||0), 0);
+  document.getElementById('value-grid').innerHTML = valueItems +
+    `<div class="metric-card" style="background:var(--brown-700);grid-column:span 2"><div class="metric-val" style="color:#fff;font-size:26px;">₱${total.toLocaleString()}</div><div class="metric-label" style="color:rgba(255,255,255,.75);">Total inventory value</div></div>`;
+}
+
+// ── Filtering ──────────────────────────────────────────────────
+function getFilteredOrders() {
+  const all      = state.orders || [];
+  const search   = orderFilters.search.trim().toLowerCase();
+  const statuses = orderFilters.statuses;
+
+  let cutoff = 0;
+  const nowMs = Date.now();
+  const DAY   = 24 * 60 * 60 * 1000;
+  if      (orderFilters.timeRange === 'today') cutoff = nowMs - DAY;
+  else if (orderFilters.timeRange === '7d')    cutoff = nowMs - 7  * DAY;
+  else if (orderFilters.timeRange === '30d')   cutoff = nowMs - 30 * DAY;
+
+  return all.filter(o => {
+    if (!statuses[o.status]) return false;
+    if (cutoff) {
+      // Orders without createdAt (pre-migration) pass the time filter so we
+      // don't accidentally hide existing data.
+      if (o.createdAt && Number(o.createdAt) < cutoff) return false;
+    }
+    if (search) {
+      const hay = (o.name + ' ' + o.contact + ' ' + o.address + ' ' + (o.notes || '')).toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
+function syncFilterUI() {
+  // Chip active states
+  document.querySelectorAll('.filter-chip[data-status]').forEach(el => {
+    const s = el.getAttribute('data-status');
+    el.classList.toggle('active', !!orderFilters.statuses[s]);
+  });
+  // Selects
+  const timeEl = document.getElementById('order-time');
+  if (timeEl)  timeEl.value  = orderFilters.timeRange;
+  const limEl  = document.getElementById('order-limit');
+  if (limEl)   limEl.value   = orderFilters.limit === Infinity ? 'all' : String(orderFilters.limit);
+  const sEl    = document.getElementById('order-search');
+  if (sEl && sEl.value !== orderFilters.search) sEl.value = orderFilters.search;
+}
+
+function renderOrders() {
+  const container = document.getElementById('orders-container');
+  const total     = (state.orders || []).length;
+  syncFilterUI();
+
+  if (total === 0) {
+    document.getElementById('order-count-label').textContent = '';
+    container.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i><p>No orders yet — your farm fresh eggs are ready when they are.</p></div>`;
+    return;
+  }
+
+  // Filter, sort newest-first, then cap by limit.
+  const filtered = getFilteredOrders().sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  const capped   = filtered.slice(0, orderFilters.limit === Infinity ? filtered.length : orderFilters.limit);
+
+  document.getElementById('order-count-label').textContent =
+    `Showing ${capped.length} of ${filtered.length} matching · ${total} total`;
+
+  if (capped.length === 0) {
+    container.innerHTML = `<div class="empty-state"><i class="ti ti-mood-empty"></i><p>No orders match your filters.</p></div>`;
+    return;
+  }
+
+  // Group by status (only the statuses currently enabled in the filter).
+  const groups = [
+    { key: 'pending',   label: 'Pending' },
+    { key: 'confirmed', label: 'Confirmed' },
+    { key: 'done',      label: 'Completed' }
+  ];
+  let html = '';
+  groups.forEach(g => {
+    if (!orderFilters.statuses[g.key]) return;
+    const rows = capped.filter(o => o.status === g.key);
+    if (!rows.length) return;
+    html += `<div class="section-label">${g.label} (${rows.length})</div>` + rows.map(orderCard).join('');
+  });
+  container.innerHTML = html;
+}
+
+function orderCard(o) {
+  // Prefer the snapshotted unitPrice (locked at submit time) so revenue
+  // doesn't shift retroactively when prices change. Fall back to the
+  // current price for pre-migration orders that don't have one.
+  const unit        = (o.unitPrice != null && Number(o.unitPrice) > 0) ? Number(o.unitPrice) : (state.prices[o.size] || 0);
+  const value       = unit * o.trays;
+  const statusClass = o.status === 'pending' ? 'badge-low' : o.status === 'confirmed' ? 'badge-good' : 'badge-good';
+  const statuses    = ['pending','confirmed','done'];
+  return `
+    <div class="order-card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div class="order-name">${o.name}</div>
+        <span class="badge ${statusClass}">${o.status}</span>
+      </div>
+      <div class="order-detail"><i class="ti ti-phone"></i> ${o.contact}</div>
+      <div class="order-detail"><i class="ti ti-map-pin"></i> ${o.address}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+        <span class="order-size-badge">${SIZE_LABELS[o.size]}</span>
+        <span style="font-size:13px;font-weight:600;">${o.trays} tray${o.trays>1?'s':''}</span>
+        <span style="font-size:13px;color:var(--brown-700);font-weight:600;margin-left:auto;">₱${value.toLocaleString()}</span>
+      </div>
+      ${o.notes ? `<div class="order-meta"><i class="ti ti-note" style="font-size:12px;"></i> ${o.notes}</div>` : ''}
+      <div class="order-meta">${formatTime(o.createdAt) || o.time || ''}</div>
+      ${isAdmin ? `
+      <div class="order-actions" style="gap:8px;align-items:stretch;">
+        <div class="status-segment" role="group" aria-label="Order status">
+          ${statuses.map(s => `
+            <button type="button" class="${s === o.status ? 'current' : ''}"
+                    ${s === o.status ? '' : `onclick="updateOrderStatus('${o.id}','${s}')"`}>
+              ${s.charAt(0).toUpperCase() + s.slice(1)}
+            </button>`).join('')}
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="deleteOrder('${o.id}')" title="Permanently delete this order"><i class="ti ti-trash"></i></button>
+      </div>` : ''}
+    </div>`;
+}
+
+// ── Filter handlers ─────────────────────────────────────────────
+function setOrderSearch(v)     { orderFilters.search = v;                    renderOrders(); }
+function toggleStatusFilter(s) { orderFilters.statuses[s] = !orderFilters.statuses[s]; renderOrders(); }
+function setOrderTimeRange(v)  { orderFilters.timeRange = v;                 renderOrders(); }
+function setOrderLimit(v)      { orderFilters.limit = v === 'all' ? Infinity : Number(v); renderOrders(); }
+function resetOrderFilters() {
+  orderFilters = {
+    search: '', statuses: { pending: true, confirmed: true, done: false }, timeRange: 'all', limit: 50
+  };
+  renderOrders();
+}
+
+// ═══════════════════════════════════════════════
+// ACTIONS — INVENTORY
+// ═══════════════════════════════════════════════
+async function addStock() {
+  if (!isAdmin) return;
+  const size  = document.getElementById('add-size').value;
+  const trays = parseInt(document.getElementById('add-trays').value);
+  const note  = document.getElementById('add-note').value.trim();
+  if (!trays || trays < 1) { showToast('Enter a valid tray count', true); return; }
+
+  // Optimistic: apply locally now so the UI feels instant.
+  const snap = snapshot();
+  state.stock[size] = (state.stock[size] || 0) + trays;
+  pushActivity(`+${trays} tray${trays>1?'s':''} ${sizeMention(size)}${note ? ' — ' + note : ''}`);
+  document.getElementById('add-trays').value = '';
+  document.getElementById('add-note').value  = '';
+  renderAll();
+
+  const btn = document.getElementById('btn-add-stock');
+  setLoading(btn, true, 'Adding…');
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const res = await callScript({ action: 'addStock', size, trays, note, adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash });
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
+    if (res.state) applyState(res.state);
+    setSyncStatus('ok');
+    showToast(`Added ${trays} tray${trays>1?'s':''} of ${SIZE_LABELS[size]}`);
+  } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
+    showToast('Failed to save. Check connection.', true);
+  } finally {
+    actionEnd();
+    setLoading(btn, false, '<i class="ti ti-plus"></i>Add trays');
+  }
+}
+
+function promptDeduct() {
+  if (!isAdmin) return;
+  document.getElementById('deduct-trays').value = '';
+  openModal('deduct-modal');
+}
+
+async function deductStock() {
+  const size  = document.getElementById('deduct-size').value;
+  const trays = parseInt(document.getElementById('deduct-trays').value);
+  if (!trays || trays < 1) { showToast('Enter a valid tray count', true); return; }
+  if ((state.stock[size] || 0) < trays) { showToast('Not enough stock to deduct', true); return; }
+
+  // Optimistic
+  const snap = snapshot();
+  state.stock[size] -= trays;
+  pushActivity(`-${trays} tray${trays>1?'s':''} ${sizeMention(size)} (sold)`);
+  closeModal('deduct-modal');
+  renderAll();
+
+  const btn = document.getElementById('btn-confirm-deduct');
+  setLoading(btn, true, 'Saving…');
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const res = await callScript({ action: 'deductStock', size, trays, adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash });
+    if (res.code === 'INSUFFICIENT_STOCK') { restoreSnapshot(snap); setSyncStatus('error'); showToast('Not enough stock to deduct', true); return; }
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
+    if (res.state) applyState(res.state);
+    setSyncStatus('ok');
+    showToast(`Deducted ${trays} tray${trays>1?'s':''} from ${SIZE_LABELS[size]}`);
+  } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
+    showToast('Failed to save. Check connection.', true);
+  } finally {
+    actionEnd();
+    setLoading(btn, false, '<i class="ti ti-check"></i>Confirm');
+  }
+}
+
+// ═══════════════════════════════════════════════
+// ACTIONS — PRICING
+// ═══════════════════════════════════════════════
+async function savePrices() {
+  if (!isAdmin) return;
+  const prices = {};
+  SIZE_ORDER.forEach(k => {
+    const el = document.getElementById('price-' + k);
+    if (el) { const v = parseFloat(el.value); if (!isNaN(v) && v >= 0) prices[k] = v; }
+  });
+
+  // Build the per-size change list before mutating state, so we can show
+  // the same human-readable summary the server will write.
+  const changes = [];
+  SIZE_ORDER.forEach(k => {
+    if (prices[k] == null) return;
+    const oldP = Number(state.prices[k]) || 0;
+    const newP = Number(prices[k]) || 0;
+    if (oldP !== newP) changes.push(`${sizeMention(k)} ₱${oldP} → ₱${newP}`);
+  });
+
+  // Optimistic
+  const snap = snapshot();
+  Object.assign(state.prices, prices);
+  if (changes.length) {
+    pushActivity((changes.length === 1 ? 'Price updated: ' : 'Prices updated: ') + changes.join(', '));
+  }
+  renderAll();
+
+  const btn = document.getElementById('btn-save-prices');
+  setLoading(btn, true, 'Saving…');
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const res = await callScript({ action: 'savePrices', prices, adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash });
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
+    if (res.state) applyState(res.state);
+    setSyncStatus('ok');
+    showToast('Prices saved and updated');
+  } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
+    showToast('Failed to save. Check connection.', true);
+  } finally {
+    actionEnd();
+    setLoading(btn, false, '<i class="ti ti-device-floppy"></i>Save prices');
+  }
+}
+
+// ═══════════════════════════════════════════════
+// ACTIONS — ADMINS
+// ═══════════════════════════════════════════════
+function renderAdminPeople() {
+  const container = document.getElementById('admin-people-list');
+  if (!container) return;
+  if (!state.admins.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:14px;"><p style="font-size:13px;">No admins yet.</p></div>';
+    return;
+  }
+  container.innerHTML = state.admins.map(a => {
+    const isMe = currentAdmin && a.id === currentAdmin.id;
+    const cantRemove = state.admins.length === 1 || isMe;
+    const removeTitle = isMe ? 'You can\'t remove yourself' :
+                        state.admins.length === 1 ? 'Can\'t remove the last admin' :
+                        'Remove this admin';
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--gray-bg);border-radius:8px;">
+        <div style="min-width:0;flex:1;">
+          <div style="font-weight:600;font-size:14px;">
+            ${escapeHtml(a.name)}
+            ${isMe ? '<span style="font-size:11px;color:var(--brown-600);font-weight:500;"> · you</span>' : ''}
+          </div>
+          <div style="font-size:11px;color:var(--text-sec);font-family:ui-monospace,monospace;">id ${a.id.slice(0,8)}…</div>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-outline btn-sm" onclick="renameAdminFromUI('${a.id}')" title="Rename"><i class="ti ti-edit"></i></button>
+          <button class="btn btn-danger  btn-sm" onclick="removeAdminFromUI('${a.id}')" title="${removeTitle}" ${cantRemove ? 'disabled' : ''}><i class="ti ti-trash"></i></button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function addAdminFromUI() {
+  if (!isAdmin) return;
+  const nameEl = document.getElementById('new-admin-name');
+  const pinEl  = document.getElementById('new-admin-pin');
+  const name = nameEl.value.trim();
+  const pin  = pinEl.value.trim();
+  if (!name) { showToast('Enter a username', true); return; }
+  if (!/^\d{4,8}$/.test(pin)) { showToast('Password must be 4–8 digits, numeric only', true); return; }
+  if (state.admins.some(a => a.name.toLowerCase() === name.toLowerCase())) {
+    showToast(`The username "${name}" is taken`, true); return;
+  }
+
+  const btn = document.getElementById('btn-add-admin');
+  setLoading(btn, true, 'Adding…');
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const newPinHash = await sha256(pin);
+    const res = await callScript({
+      action: 'addAdmin', name, newPinHash,
+      adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash
+    });
+    if (res.error) { setSyncStatus('error'); showToast(res.error, true); return; }
+    if (res.state) applyState(res.state);
+    setSyncStatus('ok');
+    nameEl.value = '';
+    pinEl.value = '';
+    showToast(`Added "${name}"`);
+  } catch (e) {
+    setSyncStatus('error');
+    showToast('Failed to add admin. Check connection.', true);
+  } finally {
+    actionEnd();
+    setLoading(btn, false, '<i class="ti ti-user-plus"></i>Add admin');
+  }
+}
+
+async function removeAdminFromUI(id) {
+  if (!isAdmin) return;
+  const target = state.admins.find(a => a.id === id);
+  if (!target) return;
+  if (currentAdmin && currentAdmin.id === id) {
+    showToast('You can\'t remove yourself', true); return;
+  }
+  if (state.admins.length === 1) {
+    showToast('Can\'t remove the last admin', true); return;
+  }
+  if (!confirm(`Remove "${target.name}" from admins?\n\nTheir PIN stops working immediately. Activity entries they wrote stay attributed to their name.`)) return;
+
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const res = await callScript({
+      action: 'deleteAdmin', targetId: id,
+      adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash
+    });
+    if (res.error) { setSyncStatus('error'); showToast(res.error, true); return; }
+    if (res.state) applyState(res.state);
+    setSyncStatus('ok');
+    showToast(`Removed "${target.name}"`);
+  } catch (e) {
+    setSyncStatus('error');
+    showToast('Failed to remove admin. Check connection.', true);
+  } finally {
+    actionEnd();
+  }
+}
+
+async function renameAdminFromUI(id) {
+  if (!isAdmin) return;
+  const target = state.admins.find(a => a.id === id);
+  if (!target) return;
+  const newName = prompt(`New display name for "${target.name}":`, target.name);
+  if (newName == null) return;
+  const trimmed = newName.trim();
+  if (!trimmed || trimmed === target.name) return;
+
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const res = await callScript({
+      action: 'renameAdmin', targetId: id, newName: trimmed,
+      adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash
+    });
+    if (res.error) { setSyncStatus('error'); showToast(res.error, true); return; }
+    if (res.state) applyState(res.state);
+    // If we renamed ourselves, update the header label
+    if (currentAdmin && currentAdmin.id === id) {
+      currentAdmin.name = trimmed;
+      const whoEl = document.getElementById('current-admin-label');
+      if (whoEl) whoEl.textContent = trimmed;
+    }
+    setSyncStatus('ok');
+    showToast(`Renamed to "${trimmed}"`);
+  } catch (e) {
+    setSyncStatus('error');
+    showToast('Failed to rename admin. Check connection.', true);
+  } finally {
+    actionEnd();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// ACTIONS — EGG SIZES
+// ═══════════════════════════════════════════════
+async function addSize() {
+  if (!isAdmin) return;
+  const keyEl   = document.getElementById('new-size-key');
+  const labelEl = document.getElementById('new-size-label');
+  const key     = (keyEl.value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
+  const label   = (labelEl.value || '').trim() || (key ? key.charAt(0).toUpperCase() + key.slice(1) : '');
+  if (!key)   { showToast('Enter a size key (letters, digits, - or _)', true); return; }
+  if (!label) { showToast('Enter a display label', true); return; }
+  if (state.sizes.some(s => s.key === key)) { showToast(`Size "${key}" already exists`, true); return; }
+
+  // Optimistic
+  const snap     = snapshot();
+  const nextOrder = state.sizes.reduce((m, s) => Math.max(m, s.sortOrder || 0), 0) + 1;
+  state.sizes.push({ key, label, sortOrder: nextOrder });
+  state.stock[key]  = 0;
+  state.prices[key] = 0;
+  refreshSizeConstants();
+  populateSizeSelects();
+  pushActivity(`Added egg size: ${label} (${key})`);
+  keyEl.value = '';
+  labelEl.value = '';
+  renderAll();
+
+  const btn = document.getElementById('btn-add-size');
+  setLoading(btn, true, 'Adding…');
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const res = await callScript({ action: 'addSize', key, label, adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash });
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
+    if (res.state) applyState(res.state);
+    setSyncStatus('ok');
+    showToast(`Added "${label}"`);
+  } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
+    showToast('Failed to add. Check connection.', true);
+  } finally {
+    actionEnd();
+    setLoading(btn, false, '<i class="ti ti-plus"></i>Add egg size');
+  }
+}
+
+async function deleteSize(key) {
+  if (!isAdmin) return;
+  const size = state.sizes.find(s => s.key === key);
+  if (!size) return;
+  const trays = Number(state.stock[key])  || 0;
+  const price = Number(state.prices[key]) || 0;
+
+  // Confirmation pop-up; harder warning when there's still stock.
+  let msg;
+  if (trays > 0) {
+    msg = `⚠️ "${size.label}" still has ${trays} tray${trays === 1 ? '' : 's'} in stock.\n\n` +
+          `Deleting will erase those trays and the current price of ₱${price}/tray. ` +
+          `Existing orders for ${size.label} stay in the system but will display the raw key "${key}".\n\n` +
+          `Are you sure you want to delete this size?`;
+  } else {
+    msg = `Delete egg size "${size.label}" (${key})?\n\n` +
+          `Existing orders for this size are kept but will display the raw key.`;
+  }
+  if (!confirm(msg)) return;
+
+  // Optimistic
+  const snap = snapshot();
+  state.sizes = state.sizes.filter(s => s.key !== key);
+  delete state.stock[key];
+  delete state.prices[key];
+  refreshSizeConstants();
+  populateSizeSelects();
+  let actMsg = `Deleted egg size: ${size.label} (${key})`;
+  if (trays > 0) actMsg += ` — erased ${trays} tray${trays === 1 ? '' : 's'} of stock`;
+  if (price > 0) actMsg += (trays > 0 ? ',' : ' —') + ` priced at ₱${price}/tray`;
+  pushActivity(actMsg);
+  renderAll();
+
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const res = await callScript({ action: 'deleteSize', key, adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash });
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
+    if (res.state) applyState(res.state);
+    setSyncStatus('ok');
+    showToast(`Deleted "${size.label}"`);
+  } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
+    showToast('Failed to delete. Check connection.', true);
+  } finally {
+    actionEnd();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// ACTIONS — ORDERS
+// ═══════════════════════════════════════════════
+async function submitOrder() {
+  const name    = document.getElementById('res-name').value.trim();
+  const contact = document.getElementById('res-contact').value.trim();
+  const address = document.getElementById('res-address').value.trim();
+  const size    = document.getElementById('res-size').value;
+  const trays   = parseInt(document.getElementById('res-trays').value);
+  const notes   = document.getElementById('res-notes').value.trim();
+
+  if (!name)               { showToast('Please enter your name', true); return; }
+  if (!contact)            { showToast('Please enter your contact number', true); return; }
+  if (!address)            { showToast('Please enter your address', true); return; }
+  if (!trays || trays < 1) { showToast('Enter number of trays', true); return; }
+  if ((state.stock[size] || 0) === 0) { showToast(`${SIZE_LABELS[size]} eggs are out of stock`, true); return; }
+
+  // Ensure we have a dedup ID for this form session
+  if (!pendingOrderId) pendingOrderId = generateUUID();
+
+  const order = {
+    id: pendingOrderId, name, contact, address, size, trays, notes,
+    status: 'pending', time: now(), createdAt: Date.now()
+  };
+
+  // Optimistic: add the order to the list so the customer sees it immediately.
+  // We intentionally do NOT clear the form yet — only on confirmed success —
+  // so the customer can retry without re-typing if the network drops.
+  const snap = snapshot();
+  state.orders.push(order);
+  pushActivity(`Order: ${name} — ${trays} tray${trays>1?'s':''} ${sizeMention(size)}`);
+  renderAll();
+
+  const btn = document.getElementById('btn-submit-order');
+  setLoading(btn, true, 'Submitting…');
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const res = await callScript({ action: 'submitOrder', order });
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
+    // Confirmed — clear form and rotate the dedup ID
+    ['res-name','res-contact','res-address','res-trays','res-notes'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    pendingOrderId = generateUUID();
+    if (res.state) applyState(res.state);
+    setSyncStatus('ok');
+    showToast(`Order placed — we'll have your eggs ready. We'll reach you at ${contact}.`);
+    switchTab('inventory');
+  } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
+    showToast('Could not submit. Please try again.', true);
+    // pendingOrderId is preserved — retry will be idempotent
+  } finally {
+    actionEnd();
+    setLoading(btn, false, '<i class="ti ti-send"></i>Submit order');
+  }
+}
+
+async function updateOrderStatus(id, status) {
+  const idx = state.orders.findIndex(o => o.id === id);
+  if (idx === -1) return;
+  if (state.orders[idx].status === status) return; // already in that status
+
+  // Optimistic
+  const snap  = snapshot();
+  const orderName = state.orders[idx].name;
+  state.orders[idx].status = status;
+  pushActivity(`Order ${status}: ${orderName}`);
+  renderAll();
+
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const res = await callScript({ action: 'updateOrderStatus', orderId: id, status, adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash });
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
+    if (res.state) applyState(res.state);
+    setSyncStatus('ok');
+    showToast(`Order marked as ${status}`);
+  } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
+    showToast('Failed. Check connection.', true);
+  } finally {
+    actionEnd();
+  }
+}
+
+async function deleteOrder(id) {
+  const o = state.orders.find(x => x.id === id);
+  const label = o
+    ? `${o.name} — ${o.trays} tray${o.trays>1?'s':''} ${SIZE_LABELS[o.size]}`
+    : 'this order';
+  const msg = `⚠️ Permanently delete:\n\n${label}\n\nThis erases the row from the Google Sheet. It cannot be undone.`;
+  if (!confirm(msg)) return;
+
+  // Optimistic — log the full deletion before removing the order, so the
+  // activity entry survives the optimistic mutation and matches the
+  // server-side audit log when it arrives.
+  const snap = snapshot();
+  if (o) pushActivity(describeDeletedOrder(o));
+  state.orders = state.orders.filter(x => x.id !== id);
+  renderAll();
+
+  actionStart();
+  setSyncStatus('syncing');
+  try {
+    const res = await callScript({ action: 'deleteOrder', orderId: id, adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash });
+    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
+    if (res.state) applyState(res.state);
+    setSyncStatus('ok');
+    showToast('Order deleted');
+  } catch (e) {
+    restoreSnapshot(snap);
+    setSyncStatus('error');
+    showToast('Failed. Check connection.', true);
+  } finally {
+    actionEnd();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// CHANGE PIN
+// ═══════════════════════════════════════════════
+let newPinBuffer = '';
+
+function newPinPress(d) {
+  if (newPinBuffer.length >= 4) return;
+  newPinBuffer += d;
+  updateNewPinDots();
+  if (newPinBuffer.length === 4) {
+    setTimeout(async () => {
+      try {
+        const newHash = await sha256(newPinBuffer);
+        const res     = await callScript({ action: 'changePIN', newPinHash: newHash, adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash });
+        if (res.error) {
+          document.getElementById('newpin-error').textContent = 'Save failed. Try again.';
+          newPinBuffer = ''; updateNewPinDots(); return;
+        }
+        adminPinHash = newHash;
+        closeModal('change-pin-modal');
+        newPinBuffer = '';
+        showToast('PIN changed successfully!');
+      } catch (e) {
+        document.getElementById('newpin-error').textContent = 'Could not reach server. Try again.';
+        newPinBuffer = ''; updateNewPinDots();
+      }
+    }, 150);
+  }
+}
+
+function newPinBack()  { newPinBuffer = newPinBuffer.slice(0,-1); updateNewPinDots(); }
+function newPinClear() { newPinBuffer = ''; updateNewPinDots(); }
+
+function updateNewPinDots() {
+  for (let i = 0; i < 4; i++) {
+    document.getElementById('ndot' + i).classList.toggle('filled', i < newPinBuffer.length);
+  }
+  document.getElementById('newpin-error').textContent = '';
+}
+
+// ═══════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════
+function now() {
+  // Universal label so the sheet is unambiguous to anyone reading it directly.
+  // The UI converts createdAt → user's local time via formatTime(); this
+  // string is only the audit-log fallback.
+  return new Date().toLocaleString('en-US', {
+    month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+    hour12: true,
+    timeZone: 'UTC'
+  }) + ' UTC';
+}
+
+function showToast(msg, isError = false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast' + (isError ? ' error-toast' : '') + ' show';
+  setTimeout(() => { t.className = 'toast' + (isError ? ' error-toast' : ''); }, 2800);
+}
+
+function setLoading(btn, loading, restoreHTML) {
+  btn.disabled = loading;
+  if (loading) {
+    btn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div>' + (typeof restoreHTML === 'string' && loading ? restoreHTML.replace(/<[^>]+>/g,'').trim() : '');
+  } else {
+    btn.innerHTML = restoreHTML;
+  }
+}
+
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+});
+
+// ═══════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════
+document.getElementById('app').style.display = 'flex';
+pendingOrderId = generateUUID();
+
+// Populate the size dropdowns from the default constants so the customer
+// reservation form is usable even before the first server fetch resolves.
+populateSizeSelects();
+
+if (SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
+  // Dev mode: show app with default state
+  renderAll();
+  showToast('Add your SCRIPT_URL to connect to Google Sheets', true);
+} else {
+  loadState().then(startPolling);
+}
+</script>
+
+<!-- PWA MANIFEST -->
+<script>
+(function() {
+  // The manifest is served as a blob URL, so relative icon src would
+  // resolve against `blob:` instead of the document. Absolutize against
+  // the page's URL so each deploy (root + /preview/<branch>/) picks up
+  // the logo from the right place.
+  const logoUrl = new URL('logo.jpg', document.baseURI).href;
+  const manifest = {
+    name: "The Good Egg – Farm Fresh Eggs",
+    short_name: "The Good Egg",
+    description: "Tracking your farm fresh eggs — inventory, pricing, and orders.",
+    start_url: ".",
+    display: "standalone",
+    background_color: "#FBF6E9",
+    theme_color: "#6B4226",
+    icons: [
+      { src: logoUrl, sizes: "192x192", type: "image/jpeg" },
+      { src: logoUrl, sizes: "512x512", type: "image/jpeg" }
+    ]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+  const link = Object.assign(document.createElement('link'), { rel: 'manifest', href: URL.createObjectURL(blob) });
+  document.head.appendChild(link);
+})();
+</script>
+
+<!-- PWA UPDATE BANNER -->
+<div id="update-banner" class="update-banner" role="status" aria-live="polite">
+  <i class="ti ti-arrow-up-circle"></i>
+  <div class="msg">
+    New version available
+    <small>The Good Egg has been updated</small>
+  </div>
+  <button class="dismiss" onclick="dismissUpdate()" title="Hide for now"><i class="ti ti-x"></i></button>
+  <button onclick="applyUpdate()">Refresh</button>
+</div>
+
+<!-- SERVICE WORKER REGISTRATION + UPDATE DETECTION -->
+<script>
+(function () {
+  if (!('serviceWorker' in navigator)) return;
+
+  // localStorage flag — set to '1' for silent auto-update (no banner).
+  // Default behaviour is to show the banner so people aren't reloaded
+  // mid-action; flip the flag from devtools to enable auto-update.
+  const AUTO_UPDATE = localStorage.getItem('good-egg-auto-update') === '1';
+  const banner = document.getElementById('update-banner');
+  let waitingWorker = null;
+
+  function showBanner(worker) {
+    waitingWorker = worker;
+    if (AUTO_UPDATE) { applyUpdate(); return; }
+    banner.classList.add('visible');
+  }
+  window.dismissUpdate = function () {
+    banner.classList.remove('visible');
+  };
+  window.applyUpdate = function () {
+    if (waitingWorker) {
+      waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+    } else {
+      window.location.reload();
+    }
+  };
+
+  // After a new SW takes over, reload exactly once.
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    // Poll for SW updates every 60 s while the tab is open. The browser
+    // also auto-checks on navigation but this catches long-lived tabs.
+    setInterval(() => reg.update().catch(() => {}), 60 * 1000);
+
+    // Path A: there's already a waiting SW from a previous visit.
+    if (reg.waiting && navigator.serviceWorker.controller) {
+      showBanner(reg.waiting);
+    }
+
+    // Path B: a new SW is discovered now.
+    reg.addEventListener('updatefound', () => {
+      const newSw = reg.installing;
+      if (!newSw) return;
+      newSw.addEventListener('statechange', () => {
+        if (newSw.state === 'installed' && navigator.serviceWorker.controller) {
+          // Only show the banner if there's already a controller — i.e.
+          // this isn't the very first SW install.
+          showBanner(newSw);
+        }
+      });
+    });
+  }).catch(err => console.warn('SW registration failed', err));
+})();
+</script>
+</body>
+</html>
