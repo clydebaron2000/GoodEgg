@@ -78,6 +78,7 @@ deploying a backend change.
 | `submitOrder` dedup | same client `id` flagged `deduplicated`, adds exactly one row |
 | `addSize` / `deleteSize` | size + companion stock/price rows added then removed |
 | `doVerifyPIN` | correct PIN verifies with identity; wrong PIN rejected |
+| header-based reads | inserting a Sheet column doesn't shift reads — `size`/`trays`/`unitPrice` still resolve by header name |
 
 ## Adding a test
 

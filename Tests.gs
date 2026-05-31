@@ -40,6 +40,7 @@ function runIntegrationTests() {
     test_submitOrderDedup_(results);
     test_addAndDeleteSize_(results);
     test_verifyPin_(results);
+    test_headerBasedReads_(results);   // mutates orders columns — keep last
   } finally {
     __TEST_DB__ = null;  // ALWAYS detach so we never touch the real sheet after this
     try {
@@ -122,6 +123,35 @@ function test_verifyPin_(r) {
 
   var bad = doVerifyPIN({ adminId: adminId, pinHash: sha256Hex('0000') });
   check_(r, 'wrong PIN is rejected', bad && bad.success === false, JSON.stringify(bad));
+}
+
+// Readers index by HEADER NAME, not column position, so a human inserting
+// a column in the Sheet no longer silently shifts every read. We prove it
+// against the real sheet: submit an order, insert a labelled column to the
+// LEFT of `size`, then confirm getState() still resolves size/trays/unitPrice
+// correctly (the old positional reader would have returned the inserted
+// column's value as the size).
+//
+// NOTE: this only exercises the READ path. Mutating handlers still write by
+// column index, so this test runs LAST and does not submit further orders
+// after the column insert.
+function test_headerBasedReads_(r) {
+  submitOrder({ order: { id: 'hdr-1', name: 'Ana', size: 'large', trays: 4 } });
+  var before = findOrder_('hdr-1');
+  check_(r, 'header test: order reads before column insert', before && before.size === 'large' && Number(before.trays) === 4,
+    JSON.stringify(before));
+  var expectedUnit = before ? before.unitPrice : null;
+
+  // Insert a new labelled column to the left of `size` (column 5).
+  var orders = getDb_().getSheetByName('orders');
+  orders.insertColumnBefore(5);
+  orders.getRange(1, 5).setValue('channel');
+
+  var after = findOrder_('hdr-1');
+  check_(r, 'header read survives an inserted column (size)',  after && after.size === 'large', after ? ('got size=' + after.size) : 'order missing');
+  check_(r, 'header read survives an inserted column (trays)', after && Number(after.trays) === 4, after ? ('got trays=' + after.trays) : 'order missing');
+  check_(r, 'header read survives an inserted column (unitPrice)', after && after.unitPrice === expectedUnit, after ? ('got unitPrice=' + after.unitPrice) : 'order missing');
+  check_(r, 'unlabelled/extra column does not appear as a size key', getState().orders.length >= 1, 'no orders');
 }
 
 // ── Tiny assertion + reporting framework ───────────────────────

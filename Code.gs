@@ -101,21 +101,59 @@ function getState() {
   };
 }
 
-// ── SIZES ──────────────────────────────────────────────────────
-
-function readSizes(ss) {
-  var sheet = ss.getSheetByName(SHEET_SIZES);
+// ── HEADER-BASED SHEET READS ───────────────────────────────────
+// Read a whole tab as an array of objects keyed by its first-row header
+// names — e.g. the `stock` tab (size, trays) yields [{size, trays}, ...].
+//
+// Why: the readers below used to index columns by POSITION (rows[i][1],
+// rows[i][2], …). Inserting or reordering a column in the Sheet then
+// silently shifted every read — wrong data, no error. Keying by header
+// name makes the reads resilient to human column edits: a column can move
+// or a new one can appear and the named fields still resolve correctly.
+//
+// Notes:
+//   • Blank header cells are skipped (a stray formatting column won't
+//     clobber a real field under the key "").
+//   • Every data row is returned as-is; per-reader guards (e.g. "skip
+//     rows with no key") stay in the individual readers so their existing
+//     behaviour is preserved exactly.
+//   • Returns [] for a missing sheet or one with only a header row.
+//   • Uses getDb_() so it honours the __TEST_DB__ test seam, same as
+//     every other handler.
+function readSheetAsObjects_(tabName) {
+  var sheet = getDb_().getSheetByName(tabName);
   if (!sheet) return [];
   var rows = sheet.getDataRange().getValues();
-  var out  = [];
+  if (rows.length < 2) return [];        // header only (or empty) → no data
+  var headers = rows[0];
+  var out = [];
   for (var i = 1; i < rows.length; i++) {
-    if (!rows[i][0]) continue;
-    out.push({
-      key:       String(rows[i][0]),
-      label:     String(rows[i][1] || rows[i][0]),
-      sortOrder: Number(rows[i][2]) || 0
-    });
+    var obj = {};
+    for (var c = 0; c < headers.length; c++) {
+      var key = String(headers[c] == null ? '' : headers[c]).trim();
+      if (!key) continue;                // ignore unlabelled columns
+      obj[key] = rows[i][c];
+    }
+    out.push(obj);
   }
+  return out;
+}
+
+// ── SIZES ──────────────────────────────────────────────────────
+// `ss` is retained on the reader signatures for call-site stability; the
+// header-based helper resolves the spreadsheet itself via getDb_(), which
+// equals the `ss` every caller already passes.
+
+function readSizes(ss) {
+  var out = readSheetAsObjects_(SHEET_SIZES)
+    .filter(function (r) { return r.key; })   // skip rows with no key (was: !rows[i][0])
+    .map(function (r) {
+      return {
+        key:       String(r.key),
+        label:     String(r.label || r.key),
+        sortOrder: Number(r.sortOrder) || 0
+      };
+    });
   out.sort(function (a, b) { return a.sortOrder - b.sortOrder; });
   return out;
 }
@@ -196,21 +234,17 @@ function deleteRowByKey_(sheet, key, valueCol) {
 // Authoritative reader: returns every row including pinHash. Used only by
 // the auth gate and write helpers.
 function readAdmins(ss) {
-  var sheet = ss.getSheetByName(SHEET_ADMINS);
-  if (!sheet) return [];
-  var rows = sheet.getDataRange().getValues();
-  var out  = [];
-  for (var i = 1; i < rows.length; i++) {
-    if (!rows[i][0]) continue;
-    out.push({
-      id:        String(rows[i][0]),
-      name:      String(rows[i][1] || rows[i][0]),
-      pinHash:   String(rows[i][2] || ''),
-      createdAt: Number(rows[i][3]) || 0,
-      active:    rows[i][4] === false ? false : true
+  return readSheetAsObjects_(SHEET_ADMINS)
+    .filter(function (r) { return r.id; })   // skip rows with no id (was: !rows[i][0])
+    .map(function (r) {
+      return {
+        id:        String(r.id),
+        name:      String(r.name || r.id),
+        pinHash:   String(r.pinHash || ''),
+        createdAt: Number(r.createdAt) || 0,
+        active:    r.active === false ? false : true
+      };
     });
-  }
-  return out;
 }
 
 // Public list: only what the client should ever see (no pinHash, only active).
@@ -376,11 +410,9 @@ function changePIN(data) {
 // ── CONFIG (key/value sheet) ───────────────────────────────────
 
 function readConfig(ss, key) {
-  var sheet = ss.getSheetByName(SHEET_CONFIG);
-  if (!sheet) return null;
-  var rows = sheet.getDataRange().getValues();
-  for (var i = 1; i < rows.length; i++) {
-    if (rows[i][0] === key) return rows[i][1];
+  var rows = readSheetAsObjects_(SHEET_CONFIG);
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].key === key) return rows[i].value;
   }
   return null;
 }
@@ -411,9 +443,8 @@ function writeConfig(ss, key, value) {
 // ── STOCK ──────────────────────────────────────────────────────
 
 function readStock(ss) {
-  var rows  = ss.getSheetByName(SHEET_STOCK).getDataRange().getValues();
   var stock = {};
-  for (var i = 1; i < rows.length; i++) stock[rows[i][0]] = rows[i][1];
+  readSheetAsObjects_(SHEET_STOCK).forEach(function (r) { stock[r.size] = r.trays; });
   return stock;
 }
 
@@ -476,9 +507,8 @@ function deductStock(data) {
 // ── PRICES ─────────────────────────────────────────────────────
 
 function readPrices(ss) {
-  var rows   = ss.getSheetByName(SHEET_PRICES).getDataRange().getValues();
   var prices = {};
-  for (var i = 1; i < rows.length; i++) prices[rows[i][0]] = rows[i][1];
+  readSheetAsObjects_(SHEET_PRICES).forEach(function (r) { prices[r.size] = r.perTray; });
   return prices;
 }
 
@@ -515,24 +545,21 @@ function savePrices(data) {
 // ── ORDERS ─────────────────────────────────────────────────────
 
 function readOrders(ss) {
-  var rows   = ss.getSheetByName(SHEET_ORDERS).getDataRange().getValues();
-  var orders = [];
-  for (var i = 1; i < rows.length; i++) {
-    orders.push({
-      id:        rows[i][0],
-      name:      rows[i][1],
-      contact:   rows[i][2],
-      address:   rows[i][3],
-      size:      rows[i][4],
-      trays:     rows[i][5],
-      notes:     rows[i][6],
-      status:    rows[i][7],
-      time:      rows[i][8],
-      createdAt: rows[i][9]  || null,  // epoch ms; null for pre-migration rows
-      unitPrice: rows[i][10] || null   // PHP/tray snapshotted at submit time
-    });
-  }
-  return orders;
+  return readSheetAsObjects_(SHEET_ORDERS).map(function (r) {
+    return {
+      id:        r.id,
+      name:      r.name,
+      contact:   r.contact,
+      address:   r.address,
+      size:      r.size,
+      trays:     r.trays,
+      notes:     r.notes,
+      status:    r.status,
+      time:      r.time,
+      createdAt: r.createdAt || null,  // epoch ms; null for pre-migration rows
+      unitPrice: r.unitPrice || null   // PHP/tray snapshotted at submit time
+    };
+  });
 }
 
 function submitOrder(data) {
@@ -647,17 +674,14 @@ function describeDeletedOrder_(o) {
 // ── ACTIVITY ───────────────────────────────────────────────────
 
 function readActivity(ss) {
-  var rows = ss.getSheetByName(SHEET_ACTIVITY).getDataRange().getValues();
-  var log  = [];
-  for (var i = 1; i < rows.length; i++) {
-    log.push({
-      action:    rows[i][0],
-      time:      rows[i][1],            // legacy pre-formatted string (script TZ)
-      createdAt: rows[i][2] || null,    // epoch ms; null for pre-migration rows
-      actor:     rows[i][3] || null     // admin name; null for pre-migration rows
-    });
-  }
-  return log;
+  return readSheetAsObjects_(SHEET_ACTIVITY).map(function (r) {
+    return {
+      action:    r.action,
+      time:      r.time,                // legacy pre-formatted string (script TZ)
+      createdAt: r.createdAt || null,   // epoch ms; null for pre-migration rows
+      actor:     r.actor || null        // admin name; null for pre-migration rows
+    };
+  });
 }
 
 // Append a row to the freeform activity log. `actor` defaults to 'system'
@@ -712,42 +736,40 @@ function logPriceEvent(ss, data, actor) {
 }
 
 function readStockEvents(ss) {
-  var sheet = ss.getSheetByName(SHEET_STOCK_EVENTS);
-  if (!sheet) return [];
-  var rows  = sheet.getDataRange().getValues();
+  var all = readSheetAsObjects_(SHEET_STOCK_EVENTS);
+  // Cap to the last EVENT_PAGE_SIZE rows to keep the payload reasonable.
+  var start = Math.max(0, all.length - EVENT_PAGE_SIZE);
   var out   = [];
-  // Cap to the last EVENT_PAGE_SIZE rows to keep payload reasonable.
-  var start = Math.max(1, rows.length - EVENT_PAGE_SIZE);
-  for (var i = start; i < rows.length; i++) {
+  for (var i = start; i < all.length; i++) {
+    var r = all[i];
     out.push({
-      createdAt: rows[i][0],
-      time:      rows[i][1],
-      size:      rows[i][2],
-      delta:     Number(rows[i][3]) || 0,
-      reason:    rows[i][4],
-      before:    Number(rows[i][5]) || 0,
-      after:     Number(rows[i][6]) || 0,
-      note:      rows[i][7] || '',
-      actor:     rows[i][8] || 'admin'
+      createdAt: r.createdAt,
+      time:      r.time,
+      size:      r.size,
+      delta:     Number(r.delta) || 0,
+      reason:    r.reason,
+      before:    Number(r.before) || 0,
+      after:     Number(r.after) || 0,
+      note:      r.note || '',
+      actor:     r.actor || 'admin'
     });
   }
   return out;
 }
 
 function readPriceEvents(ss) {
-  var sheet = ss.getSheetByName(SHEET_PRICE_EVENTS);
-  if (!sheet) return [];
-  var rows  = sheet.getDataRange().getValues();
+  var all = readSheetAsObjects_(SHEET_PRICE_EVENTS);
+  var start = Math.max(0, all.length - EVENT_PAGE_SIZE);
   var out   = [];
-  var start = Math.max(1, rows.length - EVENT_PAGE_SIZE);
-  for (var i = start; i < rows.length; i++) {
+  for (var i = start; i < all.length; i++) {
+    var r = all[i];
     out.push({
-      createdAt: rows[i][0],
-      time:      rows[i][1],
-      size:      rows[i][2],
-      oldPrice:  Number(rows[i][3]) || 0,
-      newPrice:  Number(rows[i][4]) || 0,
-      actor:     rows[i][5] || 'admin'
+      createdAt: r.createdAt,
+      time:      r.time,
+      size:      r.size,
+      oldPrice:  Number(r.oldPrice) || 0,
+      newPrice:  Number(r.newPrice) || 0,
+      actor:     r.actor || 'admin'
     });
   }
   return out;
@@ -776,12 +798,9 @@ function sha256Hex(input) {
 // (covers pre-migration sheets) and finally to the raw key.
 function sizeLabel(size) {
   try {
-    var sheet = getDb_().getSheetByName(SHEET_SIZES);
-    if (sheet) {
-      var rows = sheet.getDataRange().getValues();
-      for (var i = 1; i < rows.length; i++) {
-        if (rows[i][0] === size && rows[i][1]) return String(rows[i][1]);
-      }
+    var rows = readSheetAsObjects_(SHEET_SIZES);
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].key === size && rows[i].label) return String(rows[i].label);
     }
   } catch (e) { /* fall through to defaults */ }
   return SIZE_LABELS[size] || size;
