@@ -537,6 +537,10 @@ function readOrders(ss) {
 
 function submitOrder(data) {
   var lock = LockService.getScriptLock();
+  // Both submitOrder (read pendingTrays) and deductStock (write stock) MUST
+  // share this lock — adding a new write path requires holding it too.
+  // getScriptLock() returns the single script-wide lock, so every mutating
+  // handler here already serializes on the same instance.
   lock.waitLock(15000);
   try {
     var ss    = getDb_();
@@ -551,6 +555,43 @@ function submitOrder(data) {
     }
 
     var o = data.order;
+
+    // ── Soft stock reservation: don't oversell against orders already in
+    // the pipeline. Sum the trays of every still-PENDING order for this
+    // size, then require the un-reserved stock (stock - pendingTrays) to
+    // cover the new request. Two customers can no longer each grab the
+    // last 10 trays of Large.
+    //
+    // This is a RESERVATION, not a write: we never touch the stock sheet
+    // here — stock only moves when an admin runs deductStock. Computing
+    // pendingTrays under the SAME script lock that deductStock holds is
+    // what makes it race-free; otherwise two last-tray orders could both
+    // read "enough" before either landed.
+    //
+    // pendingTrays reuses the `existing` rows already read for dedup above
+    // (positional: size = col 5, trays = col 6, status = col 8) to avoid a
+    // second round-trip to the sheet.
+    var requested    = Number(o.trays) || 0;
+    var pendingTrays = 0;
+    for (var p = 1; p < existing.length; p++) {
+      if (existing[p][7] === 'pending' && existing[p][4] === o.size) {
+        pendingTrays += Number(existing[p][5]) || 0;
+      }
+    }
+    var onHand    = Number(readStock(ss)[o.size]) || 0;
+    var available = onHand - pendingTrays;
+    if (requested > available) {
+      // success:false + code per spec; `error` is included so the existing
+      // client (which keys off res.error, same as deductStock's rejection)
+      // shows a toast and rolls back instead of falsely reporting success.
+      return {
+        success: false,
+        code: 'INSUFFICIENT_STOCK',
+        error: 'Sorry, only ' + Math.max(0, available) + ' tray' + plural(Math.max(0, available)) +
+               ' of ' + sizeLabel(o.size) + ' left right now.'
+      };
+    }
+
     // Lock in the current price as the order's unit price. Server-side so
     // a tampered client can't underreport revenue, and so later price
     // changes don't rewrite history.

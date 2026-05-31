@@ -40,6 +40,7 @@ function runIntegrationTests() {
     test_submitOrderDedup_(results);
     test_addAndDeleteSize_(results);
     test_verifyPin_(results);
+    test_softStockReservation_(results);
   } finally {
     __TEST_DB__ = null;  // ALWAYS detach so we never touch the real sheet after this
     try {
@@ -122,6 +123,44 @@ function test_verifyPin_(r) {
 
   var bad = doVerifyPIN({ adminId: adminId, pinHash: sha256Hex('0000') });
   check_(r, 'wrong PIN is rejected', bad && bad.success === false, JSON.stringify(bad));
+}
+
+// Soft stock reservation: submitOrder must not oversell against orders
+// already pending. The canonical race is two customers each trying to buy
+// the last 10 trays of Large — only the first may succeed. Apps Script
+// runs serially so we can't truly interleave, but because pendingTrays is
+// read under the same script lock that gates the stock writes, the serial
+// outcome is exactly the race outcome: the second order sees the first's
+// reservation and is rejected.
+function test_softStockReservation_(r) {
+  // Exactly 10 trays of Large on hand, no Large orders yet.
+  addStock({ size: 'large', trays: 10, _admin: { name: 'tester' } });
+  check_(r, 'reservation setup: large=10', Number(getState().stock.large) === 10, 'got ' + getState().stock.large);
+
+  // First customer takes the last 10 trays.
+  var a = submitOrder({ order: { id: 'resv-a', name: 'Customer A', size: 'large', trays: 10 } });
+  check_(r, 'first last-trays order succeeds', a && a.success === true && !a.code, JSON.stringify({ success: a && a.success, code: a && a.code }));
+
+  // Second customer: 10 trays already reserved by A (pending) → rejected.
+  var b = submitOrder({ order: { id: 'resv-b', name: 'Customer B', size: 'large', trays: 10 } });
+  check_(r, 'second concurrent order rejected INSUFFICIENT_STOCK', b && b.success === false && b.code === 'INSUFFICIENT_STOCK', JSON.stringify(b));
+
+  // The rejection is a pure reservation check: no stock moved, no row written.
+  check_(r, 'reservation does not deduct stock', Number(getState().stock.large) === 10, 'got ' + getState().stock.large);
+  check_(r, 'rejected order is not written', findOrder_('resv-b') === null, 'resv-b row exists');
+  var oa = findOrder_('resv-a');
+  check_(r, 'accepted order is written and pending', oa && oa.status === 'pending', oa ? ('status=' + oa.status) : 'resv-a missing');
+
+  // Headroom: top up to large=15 (10 reserved by A → 5 free); a 5-tray order fits.
+  addStock({ size: 'large', trays: 5, _admin: { name: 'tester' } });
+  var c = submitOrder({ order: { id: 'resv-c', name: 'Customer C', size: 'large', trays: 5 } });
+  check_(r, 'order within remaining headroom succeeds', c && c.success === true && !c.code, JSON.stringify({ success: c && c.success, code: c && c.code }));
+
+  // Reservation is tied to PENDING status: confirming A frees its 10 trays.
+  // large=15, pending now = C(5) → 10 free; a fresh 10-tray order succeeds.
+  updateOrderStatus({ orderId: 'resv-a', status: 'confirmed', _admin: { name: 'tester' } });
+  var d = submitOrder({ order: { id: 'resv-d', name: 'Customer D', size: 'large', trays: 10 } });
+  check_(r, 'confirming an order releases its reservation', d && d.success === true && !d.code, JSON.stringify({ success: d && d.success, code: d && d.code }));
 }
 
 // ── Tiny assertion + reporting framework ───────────────────────
