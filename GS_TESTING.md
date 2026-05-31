@@ -78,6 +78,7 @@ deploying a backend change.
 | `submitOrder` dedup | same client `id` flagged `deduplicated`, adds exactly one row |
 | `addSize` / `deleteSize` | size + companion stock/price rows added then removed |
 | `doVerifyPIN` | correct PIN verifies with identity; wrong PIN rejected |
+| `computeRunway_` | reports the conservative (smaller) of overall-14d vs day-of-week runway; `OUT` at 0 trays, `∞` with no recent sales |
 
 ## Adding a test
 

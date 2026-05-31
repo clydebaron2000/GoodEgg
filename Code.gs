@@ -990,6 +990,45 @@ function buildDashboard() {
   var stockTableEnd = row + 9;
   row = stockTableEnd + 2;
 
+  // ── Section: Stock runway (days to depletion at recent sales rate)
+  // The one forward-looking metric on an otherwise retrospective dashboard:
+  // "how long until each size runs out?" Computed in JS (computeRunway_)
+  // rather than as a live formula because the day-of-week-matched rate
+  // (avg of the same weekday's last 4 occurrences) isn't expressible as a
+  // simple SUMIFS. It's a snapshot stamped at build time — re-run
+  // buildDashboard() to refresh, same as adding charts.
+  sectionHeader_(sheet, row, 'Stock runway — days until each size runs out (at recent sales rate)');
+  row += 1;
+  sheet.getRange(row, 1, 1, 3).setValues([['Size', 'Trays', 'Runway']])
+    .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
+  row += 1;
+
+  var runway     = computeRunway_(readStock(ss), readStockEvents(ss));
+  var sizeRows   = readSizes(ss);                       // for labels + ordering
+  var labelByKey = {};
+  var orderByKey = {};
+  sizeRows.forEach(function (s, i) { labelByKey[s.key] = s.label; orderByKey[s.key] = i; });
+  runway.sort(function (a, b) {
+    var ia = (a.size in orderByKey) ? orderByKey[a.size] : 999;
+    var ib = (b.size in orderByKey) ? orderByKey[b.size] : 999;
+    return ia - ib;
+  });
+
+  var runwayStart = row;
+  if (runway.length) {
+    runway.forEach(function (rw, i) {
+      var rr = runwayStart + i;
+      sheet.getRange(rr, 1).setValue(labelByKey[rw.size] || rw.size);
+      sheet.getRange(rr, 2).setValue(rw.trays);
+      // Single conservative number; both raw method values live in the cell
+      // note (hover tooltip) so the operator can see what drove it.
+      sheet.getRange(rr, 3).setValue(rw.display).setNote(runwayNote_(rw));
+    });
+  } else {
+    sheet.getRange(runwayStart, 1).setValue('(no sizes)');
+  }
+  row = runwayStart + Math.max(runway.length, 1) + 1;
+
   // ── Section: Daily net flow (last 30 days)
   sectionHeader_(sheet, row, 'Daily restocked vs sold (last 30 days)');
   row += 1;
@@ -1117,6 +1156,97 @@ function sectionHeader_(sheet, row, label) {
     .setBackground('#8B5A3C')
     .setHorizontalAlignment('left').setVerticalAlignment('middle');
   sheet.setRowHeight(row, 28);
+}
+
+// ── RUNWAY PROJECTION ──────────────────────────────────────────
+// Days-to-depletion per size from recent sales. Pure + unit-testable: no
+// Sheet access, takes the stock map + stock_events array as plain data.
+//
+// Two independent daily-sales-rate estimates; we report the SMALLER runway
+// (the more conservative — sooner to run out) of the two:
+//   1. overallRate — total trays sold in the trailing 14 days / 14
+//   2. dowRate     — avg trays sold on the same weekday as `now`, over that
+//                    weekday's last 4 occurrences (today, -7, -14, -21) / 4
+//
+// "sold" = stock_events rows with reason 'sold' (delta is negative, so trays
+// sold = -delta). Day windows are UTC to match the rest of the backend
+// (createdAt is epoch ms; events backfilled by migrate() carry createdAt 0
+// and fall outside every window, so they're ignored — consistent with the
+// dashboard's other N-day formulas). `now` is injectable for deterministic
+// tests; it defaults to Date.now().
+//
+// Returns one entry per size key in stockData:
+//   { size, trays, overallRate, dowRate, runwayOverall, runwayDow,
+//     runwayDays, display }
+// runwayDays is the conservative pick; `display` is the formatted cell value:
+//   'OUT'      when trays <= 0
+//   '∞'        when neither method saw a recent sale (rate 0)
+//   'X.Y days' otherwise
+function computeRunway_(stockData, stockEvents, now) {
+  now = now || Date.now();
+  var DAY        = 86400000;
+  var todayStart = Math.floor(now / DAY) * DAY;   // UTC midnight (epoch 0 is a UTC midnight)
+  var winStart14 = now - 14 * DAY;
+
+  // The 4 most recent occurrences of today's weekday: today, -7d, -14d, -21d.
+  var dowWindows = [];
+  for (var k = 0; k < 4; k++) {
+    var start = todayStart - k * 7 * DAY;
+    dowWindows.push({ start: start, end: start + DAY });
+  }
+
+  var sold14  = {};   // size -> trays sold in trailing 14 days
+  var soldDow = {};   // size -> trays sold across the 4 same-weekday windows
+  (stockEvents || []).forEach(function (ev) {
+    if (!ev || ev.reason !== 'sold') return;
+    var qty = -(Number(ev.delta) || 0);           // sold delta is negative
+    if (qty <= 0) return;
+    var when = Number(ev.createdAt) || 0;
+    var size = ev.size;
+    if (when >= winStart14 && when <= now) {
+      sold14[size] = (sold14[size] || 0) + qty;
+    }
+    for (var w = 0; w < dowWindows.length; w++) {
+      if (when >= dowWindows[w].start && when < dowWindows[w].end) {
+        soldDow[size] = (soldDow[size] || 0) + qty;
+        break;
+      }
+    }
+  });
+
+  var out = [];
+  Object.keys(stockData || {}).forEach(function (size) {
+    var trays         = Number(stockData[size]) || 0;
+    var overallRate   = (sold14[size]  || 0) / 14;
+    var dowRate       = (soldDow[size] || 0) / 4;
+    var runwayOverall = overallRate > 0 ? trays / overallRate : Infinity;
+    var runwayDow     = dowRate     > 0 ? trays / dowRate     : Infinity;
+    var runwayDays    = Math.min(runwayOverall, runwayDow);   // smaller = more conservative
+
+    var display;
+    if (trays <= 0)                 display = 'OUT';
+    else if (!isFinite(runwayDays)) display = '∞';
+    else                            display = runwayDays.toFixed(1) + ' days';
+
+    out.push({
+      size: size, trays: trays,
+      overallRate: overallRate, dowRate: dowRate,
+      runwayOverall: runwayOverall, runwayDow: runwayDow,
+      runwayDays: runwayDays, display: display
+    });
+  });
+  return out;
+}
+
+// Cell-note (tooltip) text exposing both raw estimates behind a runway value.
+function runwayNote_(rw) {
+  function rate(x) { return (Math.round(x * 100) / 100) + ' trays/day'; }
+  function days(x) { return isFinite(x) ? (Math.round(x * 10) / 10) + ' days' : '∞'; }
+  return [
+    'Conservative of two estimates (smaller runway shown):',
+    '• Overall (last 14 days): ' + rate(rw.overallRate) + ' → ' + days(rw.runwayOverall),
+    '• Same weekday (last 4):  ' + rate(rw.dowRate)     + ' → ' + days(rw.runwayDow)
+  ].join('\n');
 }
 
 // ── MIGRATION ──────────────────────────────────────────────────

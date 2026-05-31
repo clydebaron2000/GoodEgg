@@ -40,6 +40,7 @@ function runIntegrationTests() {
     test_submitOrderDedup_(results);
     test_addAndDeleteSize_(results);
     test_verifyPin_(results);
+    test_computeRunway_(results);
   } finally {
     __TEST_DB__ = null;  // ALWAYS detach so we never touch the real sheet after this
     try {
@@ -122,6 +123,47 @@ function test_verifyPin_(r) {
 
   var bad = doVerifyPIN({ adminId: adminId, pinHash: sha256Hex('0000') });
   check_(r, 'wrong PIN is rejected', bad && bad.success === false, JSON.stringify(bad));
+}
+
+// Runway projection. computeRunway_ is PURE (no Sheet access), so we drive
+// it directly with a fixed `now` and synthetic stock_events. The scenario
+// is built so the two rate estimates disagree — proving we report the
+// SMALLER (more conservative) runway — and so OUT / ∞ both occur.
+//
+//   now = noon UTC on a known day. For 'large' (20 trays):
+//     • trailing 14d sales: 6 (today) + 2 (-7d) + 10 (-10d) = 18 → 18/14 ≈ 1.29/day → ~15.6 days
+//     • same-weekday sales (today,-7,-14,-21): 6+2+3+5 = 16 → 16/4 = 4/day → 5.0 days
+//   conservative = min(15.6, 5.0) = 5.0 days (the DOW estimate wins).
+//   Events at -30d and a createdAt=0 backfilled row must be ignored; a
+//   'restock' row must be ignored.
+function test_computeRunway_(r) {
+  var DAY = 86400000;
+  var todayStart = 19675 * DAY;              // a real UTC midnight
+  var now = todayStart + 12 * 3600000;       // noon
+  function at(days, hour) { return todayStart + days * DAY + hour * 3600000; }
+
+  var events = [
+    { reason: 'sold',    size: 'large', delta: -6,   createdAt: at(0,  6) },
+    { reason: 'sold',    size: 'large', delta: -2,   createdAt: at(-7, 6) },
+    { reason: 'sold',    size: 'large', delta: -10,  createdAt: at(-10,6) },
+    { reason: 'sold',    size: 'large', delta: -3,   createdAt: at(-14,6) },
+    { reason: 'sold',    size: 'large', delta: -5,   createdAt: at(-21,6) },
+    { reason: 'sold',    size: 'large', delta: -100, createdAt: at(-30,6) },  // outside all windows
+    { reason: 'sold',    size: 'large', delta: -50,  createdAt: 0          },  // backfilled → ignored
+    { reason: 'restock', size: 'large', delta: 40,   createdAt: at(0,  7) }   // not a sale → ignored
+  ];
+  var stock = { large: 20, medium: 0, small: 10 };
+
+  var res = computeRunway_(stock, events, now);
+  var byKey = {};
+  res.forEach(function (x) { byKey[x.size] = x; });
+
+  check_(r, 'runway: overall 14d rate = 18/14', byKey.large && byKey.large.overallRate === 18 / 14, byKey.large ? ('got ' + byKey.large.overallRate) : 'missing');
+  check_(r, 'runway: day-of-week rate = 4/day', byKey.large && byKey.large.dowRate === 4, byKey.large ? ('got ' + byKey.large.dowRate) : 'missing');
+  check_(r, 'runway: reports the conservative (smaller) runway', byKey.large && byKey.large.runwayDays === 5, byKey.large ? ('got ' + byKey.large.runwayDays) : 'missing');
+  check_(r, 'runway: large displays "5.0 days"', byKey.large && byKey.large.display === '5.0 days', byKey.large ? ('got ' + byKey.large.display) : 'missing');
+  check_(r, 'runway: zero trays → OUT', byKey.medium && byKey.medium.display === 'OUT', byKey.medium ? ('got ' + byKey.medium.display) : 'missing');
+  check_(r, 'runway: no recent sales → ∞', byKey.small && byKey.small.display === '∞', byKey.small ? ('got ' + byKey.small.display) : 'missing');
 }
 
 // ── Tiny assertion + reporting framework ───────────────────────
