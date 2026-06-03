@@ -10,10 +10,10 @@ Add it to your phone's home screen (Share → Add to Home Screen on iOS, ⋮ →
 
 ## What it does
 
-- **Customers** — view current stock per size, view per-tray prices, and place orders. No login.
-- **Admins** — everything above, plus add/deduct stock, confirm/close/delete orders, edit prices, add/remove egg sizes, manage other admins, and change their PIN. Gated by a 4-digit PIN. Multiple admins are supported, and each write is attributed to the admin who made it.
+- **Customers** — pick a farm, view its stock per size, view per-tray prices, and place orders. No login.
+- **Admins** — everything above, plus add/deduct stock per farm, confirm/close/delete orders, edit prices, add/remove egg sizes, manage farms (and which sizes each offers), manage other admins, and change their PIN. Gated by a 4-digit PIN. Multiple admins are supported, and each write is attributed to the admin who made it.
 
-Sizes are runtime-editable (default set: small, medium, large, XL, jumbo). Quantities are in trays (default 30 eggs per tray). Prices are in PHP.
+Multiple farms are supported: each farm holds its own stock and an order draws from one farm. Prices and the size list are shared across farms. Sizes are runtime-editable (default set: small, medium, large, XL, jumbo) and offered per-farm. Quantities are in trays (default 30 eggs per tray). Prices are in PHP.
 
 ---
 
@@ -23,7 +23,7 @@ Sizes are runtime-editable (default set: small, medium, large, XL, jumbo). Quant
 |---|---|
 | Frontend | A single `index.html` file — vanilla JS, no build step, PWA-installable |
 | Backend | Google Apps Script (`Code.gs`) acting as a JSON API over a Google Sheet |
-| Storage | A Google Sheet, one tab per table: `stock`, `prices`, `orders`, `sizes`, `admins`, `stock_events`, `price_events`, `activity`, `config` (+ a generated `Dashboard`) |
+| Storage | A Google Sheet, one tab per table: `stock`, `prices`, `orders`, `sizes`, `farms`, `admins`, `stock_events`, `price_events`, `activity`, `config` (+ a generated `Dashboard`) |
 | Auth | 4-digit PIN per admin, stored server-side as a SHA-256 hash in the `admins` sheet (re-verified on every write; no session tokens) |
 | Hosting | GitHub Pages, deployed automatically by GitHub Actions on push to `main` |
 
