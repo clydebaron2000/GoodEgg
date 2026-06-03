@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="The Good Egg">
 <meta name="theme-color" content="#6B4226">
-<meta name="build-version" content="fa79e65a30c4d1ec2174955b0225c73cd83f26a4">
+<meta name="build-version" content="81ab68105fb99677cc83433d5f5e59de4c57387e">
 <title>The Good Egg – Farm Fresh Eggs</title>
 <meta name="description" content="Tracking your farm fresh eggs — inventory, pricing, and orders for The Good Egg farm.">
 <link rel="icon" type="image/jpeg" href="logo.jpg">
@@ -853,6 +853,8 @@ function generateUUID() {
 // Apps Script returns a 302 redirect; redirect:'follow' handles it.
 
 async function callScript(payload) {
+  // Local dev: dev/mock-backend.js (loaded only with ?mock=1) sets this.
+  if (window.__MOCK_BACKEND__) return window.__MOCK_BACKEND__.callScript(payload);
   const res = await fetch(SCRIPT_URL, {
     method:   'POST',
     headers:  { 'Content-Type': 'text/plain' },
@@ -864,6 +866,7 @@ async function callScript(payload) {
 }
 
 async function fetchState() {
+  if (window.__MOCK_BACKEND__) return window.__MOCK_BACKEND__.fetchState();
   const res = await fetch(SCRIPT_URL + '?action=getState', { redirect: 'follow' });
   if (!res.ok) throw new Error('Network error ' + res.status);
   return res.json();
@@ -2237,7 +2240,15 @@ pendingOrderId = generateUUID();
 // reservation form is usable even before the first server fetch resolves.
 populateSizeSelects();
 
-if (SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
+if (new URLSearchParams(location.search).get('mock') === '1') {
+  // Local E2E: load the in-memory mock backend, then boot against it.
+  // Zero effect on production — only runs when ?mock=1 is in the URL.
+  const s = document.createElement('script');
+  s.src = 'dev/mock-backend.js';
+  s.onload = () => loadState().then(startPolling);
+  s.onerror = () => showToast('Could not load dev/mock-backend.js', true);
+  document.head.appendChild(s);
+} else if (SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
   // Dev mode: show app with default state
   renderAll();
   showToast('Add your SCRIPT_URL to connect to Google Sheets', true);
