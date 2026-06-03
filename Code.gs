@@ -12,6 +12,7 @@ var SHEET_ACTIVITY     = 'activity';
 var SHEET_CONFIG       = 'config';
 var SHEET_SIZES        = 'sizes';
 var SHEET_ADMINS       = 'admins';
+var SHEET_FARMS        = 'farms';
 var SHEET_STOCK_EVENTS = 'stock_events';
 var SHEET_PRICE_EVENTS = 'price_events';
 var PIN_KEY            = 'adminPinHash';  // legacy single-PIN config row, kept for migration
@@ -47,7 +48,9 @@ function doPost(e) {
     var adminActions = ['addStock', 'deductStock', 'savePrices',
                         'updateOrderStatus', 'deleteOrder', 'changePIN',
                         'addSize', 'deleteSize',
-                        'addAdmin', 'deleteAdmin', 'renameAdmin'];
+                        'addAdmin', 'deleteAdmin', 'renameAdmin',
+                        'addFarm', 'renameFarm', 'setFarmActive', 'deleteFarm',
+                        'addFarmSize', 'removeFarmSize'];
     if (adminActions.indexOf(action) !== -1) {
       var admin = verifyAdminLogin_(data.adminId, data.pinHash);
       if (!admin) admin = verifyLegacyLogin_(data.pinHash);
@@ -70,6 +73,12 @@ function doPost(e) {
       case 'addAdmin':          return jsonResponse(addAdmin(data));
       case 'deleteAdmin':       return jsonResponse(deleteAdmin(data));
       case 'renameAdmin':       return jsonResponse(renameAdmin(data));
+      case 'addFarm':           return jsonResponse(addFarm(data));
+      case 'renameFarm':        return jsonResponse(renameFarm(data));
+      case 'setFarmActive':     return jsonResponse(setFarmActive(data));
+      case 'deleteFarm':        return jsonResponse(deleteFarm(data));
+      case 'addFarmSize':       return jsonResponse(addFarmSize(data));
+      case 'removeFarmSize':    return jsonResponse(removeFarmSize(data));
       default:                  return jsonResponse({ error: 'Unknown action' });
     }
   } catch (err) {
@@ -84,6 +93,7 @@ function getState() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   return {
     admins:       readAdminsPublic(ss),   // safe-to-expose subset (no pinHash)
+    farms:        readFarms(ss),          // all farms (no secrets); client shows active to customers
     sizes:        readSizes(ss),
     stock:        readStock(ss),
     prices:       readPrices(ss),
@@ -130,9 +140,9 @@ function addSize(data) {
     var nextOrder = sizes.reduce(function (m, s) { return Math.max(m, s.sortOrder); }, 0) + 1;
 
     ss.getSheetByName(SHEET_SIZES).appendRow([key, asText_(label), nextOrder]);
-    // Seed companion rows in stock and prices so the new size appears
-    // everywhere downstream calls expect it.
-    ss.getSheetByName(SHEET_STOCK ).appendRow([key, 0]);
+    // Seed the global price row. Stock rows are NOT seeded here: sizes are
+    // opt-in per farm (a farm starts offering a size via addFarmSize, which
+    // creates its (size, farm) stock row).
     ss.getSheetByName(SHEET_PRICES).appendRow([key, 0]);
 
     logActivity(ss, 'Added egg size: ' + label + ' (' + key + ')', data._admin && data._admin.name);
@@ -156,7 +166,17 @@ function deleteSize(data) {
     if (!size) return { error: 'Size not found' };
     var label = size.label;
 
-    var trays = deleteRowByKey_(ss.getSheetByName(SHEET_STOCK),  key, 1);
+    // A size can have one stock row per farm now — delete them all and sum
+    // the trays erased (bottom-up so indices stay valid as rows drop out).
+    var stockSheet = ss.getSheetByName(SHEET_STOCK);
+    var srows = stockSheet.getDataRange().getValues();
+    var trays = 0;
+    for (var s = srows.length - 1; s >= 1; s--) {
+      if (srows[s][0] === key) {
+        trays += Number(srows[s][1]) || 0;
+        stockSheet.deleteRow(s + 1);
+      }
+    }
     var price = deleteRowByKey_(ss.getSheetByName(SHEET_PRICES), key, 1);
     deleteRowByKey_(ss.getSheetByName(SHEET_SIZES), key, 0);
 
@@ -367,6 +387,223 @@ function changePIN(data) {
   return { error: 'Admin record not found' };
 }
 
+// ── FARMS ──────────────────────────────────────────────────────
+// Each farm holds its own stock (one (size, farm) row per offered size in
+// the `stock` sheet). Orders draw from exactly one farm; prices are global.
+// Mirrors the admins pattern: soft `active` flag, name uniqueness, and a
+// guard against removing the last active farm out from under the shop.
+
+function readFarms(ss) {
+  var sheet = ss.getSheetByName(SHEET_FARMS);
+  if (!sheet) return [];
+  var rows = sheet.getDataRange().getValues();
+  var out  = [];
+  for (var i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    out.push({
+      id:        String(rows[i][0]),
+      name:      String(rows[i][1] || rows[i][0]),
+      active:    rows[i][2] === false ? false : true,
+      sortOrder: Number(rows[i][3]) || 0
+    });
+  }
+  out.sort(function (a, b) { return a.sortOrder - b.sortOrder; });
+  return out;
+}
+
+// Look up a single farm record by id, or null.
+function farmById_(ss, id) {
+  if (!id) return null;
+  var farms = readFarms(ss);
+  for (var i = 0; i < farms.length; i++) {
+    if (farms[i].id === String(id)) return farms[i];
+  }
+  return null;
+}
+
+// Display name for a farm id (falls back to the id, then a dash).
+function farmName_(ss, id) {
+  var f = farmById_(ss, id);
+  return f ? f.name : (id || '—');
+}
+
+// Insert a new farm row. Shared by addFarm (API) and setup/migrate seeding.
+function createFarm_(ss, name) {
+  name = String(name || '').trim();
+  if (!name) return { error: 'Farm name is required' };
+  var sheet = ss.getSheetByName(SHEET_FARMS);
+  if (!sheet) return { error: 'farms sheet not found — run migrate()' };
+  var existing = readFarms(ss);
+  var clash = existing.some(function (f) {
+    return f.active && f.name.toLowerCase() === name.toLowerCase();
+  });
+  if (clash) return { error: 'A farm named "' + name + '" already exists' };
+  var nextOrder = existing.reduce(function (m, f) { return Math.max(m, f.sortOrder); }, 0) + 1;
+  var id = Utilities.getUuid();
+  sheet.appendRow([id, asText_(name), true, nextOrder]);
+  return { success: true, farm: { id: id, name: name } };
+}
+
+function addFarm(data) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var ss  = SpreadsheetApp.getActiveSpreadsheet();
+    var res = createFarm_(ss, data.name);
+    if (res.error) return res;
+    logActivity(ss, 'Added farm: ' + res.farm.name, data._admin && data._admin.name);
+    return { success: true, farm: res.farm, state: getState() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function renameFarm(data) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var targetId = String(data.targetId || '');
+    var newName  = String(data.newName || '').trim();
+    if (!targetId || !newName) return { error: 'targetId and newName required' };
+    var farms = readFarms(ss);
+    var clash = farms.some(function (f) {
+      return f.active && f.id !== targetId && f.name.toLowerCase() === newName.toLowerCase();
+    });
+    if (clash) return { error: 'A farm named "' + newName + '" already exists' };
+    var sheet = ss.getSheetByName(SHEET_FARMS);
+    var rows  = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0] === targetId) {
+        var oldName = rows[i][1];
+        sheet.getRange(i + 1, 2).setValue(asText_(newName));
+        logActivity(ss, 'Renamed farm: ' + oldName + ' → ' + newName, data._admin && data._admin.name);
+        return { success: true, state: getState() };
+      }
+    }
+    return { error: 'Farm not found' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function setFarmActive(data) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var targetId = String(data.targetId || '');
+    var active   = data.active === true || String(data.active) === 'true';
+    if (!targetId) return { error: 'targetId required' };
+    var farms  = readFarms(ss);
+    var target = farms.find(function (f) { return f.id === targetId; });
+    if (!target) return { error: 'Farm not found' };
+    // Don't deactivate the last active farm — the shop needs at least one.
+    if (!active && target.active) {
+      var activeOthers = farms.filter(function (f) { return f.active && f.id !== targetId; });
+      if (activeOthers.length === 0) return { error: 'Cannot deactivate the last active farm' };
+    }
+    var sheet = ss.getSheetByName(SHEET_FARMS);
+    var rows  = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0] === targetId) {
+        sheet.getRange(i + 1, 3).setValue(active);
+        logActivity(ss, (active ? 'Activated' : 'Deactivated') + ' farm: ' + target.name, data._admin && data._admin.name);
+        return { success: true, state: getState() };
+      }
+    }
+    return { error: 'Farm not found' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function deleteFarm(data) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var targetId = String(data.targetId || '');
+    if (!targetId) return { error: 'targetId required' };
+    var farms  = readFarms(ss);
+    var target = farms.find(function (f) { return f.id === targetId; });
+    if (!target) return { error: 'Farm not found' };
+    // Never let the active farm set drop to zero.
+    var activeOthers = farms.filter(function (f) { return f.active && f.id !== targetId; });
+    if (target.active && activeOthers.length === 0) {
+      return { error: 'Cannot remove the last active farm' };
+    }
+    // Remove the farm row.
+    var sheet = ss.getSheetByName(SHEET_FARMS);
+    var rows  = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0] === targetId) { sheet.deleteRow(i + 1); break; }
+    }
+    // Remove that farm's stock rows (its offered sizes). Walk bottom-up so
+    // deletions don't shift the indices of rows we haven't checked yet.
+    var stock = ss.getSheetByName(SHEET_STOCK);
+    var srows = stock.getDataRange().getValues();
+    var erased = 0;
+    for (var j = srows.length - 1; j >= 1; j--) {
+      if (String(srows[j][2] || '') === targetId) { stock.deleteRow(j + 1); erased++; }
+    }
+    var msg = 'Deleted farm: ' + target.name;
+    if (erased > 0) msg += ' — erased ' + erased + ' stock row' + plural(erased);
+    logActivity(ss, msg, data._admin && data._admin.name);
+    return { success: true, state: getState() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// A farm starts offering a size: create a (size, farm) stock row at 0 trays.
+function addFarmSize(data) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var ss   = SpreadsheetApp.getActiveSpreadsheet();
+    var farm = String(data.farm || '');
+    var size = String(data.size || '');
+    if (!farmById_(ss, farm)) return { error: 'Unknown farm', code: 'UNKNOWN_FARM' };
+    if (!readSizes(ss).some(function (s) { return s.key === size; })) {
+      return { error: 'Unknown size' };
+    }
+    var sheet = ss.getSheetByName(SHEET_STOCK);
+    var rows  = sheet.getDataRange().getValues();
+    if (findStockRow_(rows, size, farm) !== -1) {
+      return { error: 'Farm already offers that size' };
+    }
+    sheet.appendRow([size, 0, farm]);
+    logActivity(ss, farmName_(ss, farm) + ' now offers ' + sizeMention_(size), data._admin && data._admin.name);
+    return { success: true, state: getState() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// A farm stops offering a size: delete its (size, farm) stock row.
+function removeFarmSize(data) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var ss   = SpreadsheetApp.getActiveSpreadsheet();
+    var farm = String(data.farm || '');
+    var size = String(data.size || '');
+    var sheet = ss.getSheetByName(SHEET_STOCK);
+    var rows  = sheet.getDataRange().getValues();
+    var rowIdx = findStockRow_(rows, size, farm);
+    if (rowIdx === -1) return { error: 'Farm does not offer that size' };
+    var trays = Number(rows[rowIdx - 1][1]) || 0;
+    sheet.deleteRow(rowIdx);
+    var msg = farmName_(ss, farm) + ' no longer offers ' + sizeMention_(size);
+    if (trays > 0) msg += ' — erased ' + trays + ' tray' + plural(trays);
+    logActivity(ss, msg, data._admin && data._admin.name);
+    return { success: true, state: getState() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 // ── CONFIG (key/value sheet) ───────────────────────────────────
 
 function readConfig(ss, key) {
@@ -404,11 +641,32 @@ function writeConfig(ss, key, value) {
 
 // ── STOCK ──────────────────────────────────────────────────────
 
+// Stock rows are [size, trays, farm]. Returns a nested map keyed by farm:
+//   { farmId: { size: trays } }
+// A (size, farm) row's existence means "this farm carries this size" — the
+// tray count may legitimately be 0. Rows with a blank farm (only possible in
+// the brief window before migrate() runs) group under '' and are ignored by
+// the client, which only renders known farms.
 function readStock(ss) {
   var rows  = ss.getSheetByName(SHEET_STOCK).getDataRange().getValues();
   var stock = {};
-  for (var i = 1; i < rows.length; i++) stock[rows[i][0]] = rows[i][1];
+  for (var i = 1; i < rows.length; i++) {
+    var size = rows[i][0];
+    if (!size) continue;
+    var farm = String(rows[i][2] || '');
+    if (!stock[farm]) stock[farm] = {};
+    stock[farm][size] = Number(rows[i][1]) || 0;
+  }
   return stock;
+}
+
+// Find the 1-based sheet row index of the (size, farm) stock entry, or -1.
+// `rows` is the already-read getValues() array (col 0 size, col 2 farm).
+function findStockRow_(rows, size, farm) {
+  for (var i = 1; i < rows.length; i++) {
+    if (rows[i][0] === size && String(rows[i][2] || '') === String(farm)) return i + 1;
+  }
+  return -1;
 }
 
 function addStock(data) {
@@ -419,19 +677,24 @@ function addStock(data) {
     var sheet = ss.getSheetByName(SHEET_STOCK);
     var rows  = sheet.getDataRange().getValues();
     var trays = Number(data.trays);
+    var farm  = String(data.farm || '');
+    if (!farmById_(ss, farm)) return { error: 'Unknown farm', code: 'UNKNOWN_FARM' };
+
     var before = 0, after = 0;
-    for (var i = 1; i < rows.length; i++) {
-      if (rows[i][0] === data.size) {
-        before = Number(rows[i][1]) || 0;
-        after  = before + trays;
-        sheet.getRange(i + 1, 2).setValue(after);
-        break;
-      }
+    var rowIdx = findStockRow_(rows, data.size, farm);
+    if (rowIdx === -1) {
+      // First stock for this (farm, size) — the farm starts offering this size.
+      after = trays;
+      sheet.appendRow([data.size, after, farm]);
+    } else {
+      before = Number(rows[rowIdx - 1][1]) || 0;
+      after  = before + trays;
+      sheet.getRange(rowIdx, 2).setValue(after);
     }
     var note  = data.note ? ' — ' + data.note : '';
     var actor = data._admin && data._admin.name;
-    logActivity(ss, '+' + trays + ' tray' + plural(trays) + ' ' + sizeMention_(data.size) + note, actor);
-    logStockEvent(ss, { size: data.size, delta: trays, reason: 'restock', before: before, after: after, note: data.note || '' }, actor);
+    logActivity(ss, '+' + trays + ' tray' + plural(trays) + ' ' + sizeMention_(data.size) + ' @ ' + farmName_(ss, farm) + note, actor);
+    logStockEvent(ss, { size: data.size, delta: trays, reason: 'restock', before: before, after: after, note: data.note || '', farm: farm }, actor);
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -446,21 +709,23 @@ function deductStock(data) {
     var sheet = ss.getSheetByName(SHEET_STOCK);
     var rows  = sheet.getDataRange().getValues();
     var trays = Number(data.trays);
-    var before = 0, after = 0;
-    for (var i = 1; i < rows.length; i++) {
-      if (rows[i][0] === data.size) {
-        before = Number(rows[i][1]) || 0;
-        if (trays > before) {
-          return { error: 'Not enough stock', code: 'INSUFFICIENT_STOCK' };
-        }
-        after = before - trays;
-        sheet.getRange(i + 1, 2).setValue(after);
-        break;
-      }
+    var farm  = String(data.farm || '');
+    if (!farmById_(ss, farm)) return { error: 'Unknown farm', code: 'UNKNOWN_FARM' };
+
+    var rowIdx = findStockRow_(rows, data.size, farm);
+    if (rowIdx === -1) {
+      return { error: 'Not enough stock', code: 'INSUFFICIENT_STOCK' };
     }
+    var before = Number(rows[rowIdx - 1][1]) || 0;
+    if (trays > before) {
+      return { error: 'Not enough stock', code: 'INSUFFICIENT_STOCK' };
+    }
+    var after = before - trays;
+    sheet.getRange(rowIdx, 2).setValue(after);
+
     var actor = data._admin && data._admin.name;
-    logActivity(ss, '-' + trays + ' tray' + plural(trays) + ' ' + sizeMention_(data.size) + ' (sold)', actor);
-    logStockEvent(ss, { size: data.size, delta: -trays, reason: 'sold', before: before, after: after, note: data.note || '' }, actor);
+    logActivity(ss, '-' + trays + ' tray' + plural(trays) + ' ' + sizeMention_(data.size) + ' @ ' + farmName_(ss, farm) + ' (sold)', actor);
+    logStockEvent(ss, { size: data.size, delta: -trays, reason: 'sold', before: before, after: after, note: data.note || '', farm: farm }, actor);
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -523,7 +788,8 @@ function readOrders(ss) {
       status:    rows[i][7],
       time:      rows[i][8],
       createdAt: rows[i][9]  || null,  // epoch ms; null for pre-migration rows
-      unitPrice: rows[i][10] || null   // PHP/tray snapshotted at submit time
+      unitPrice: rows[i][10] || null,  // PHP/tray snapshotted at submit time
+      farm:      rows[i][11] || null   // farm id the order draws from; null for pre-migration rows
     });
   }
   return orders;
@@ -545,9 +811,16 @@ function submitOrder(data) {
     }
 
     var o = data.order;
+    // Every order draws from a specific farm. Validate it exists and is
+    // active so a stale client can't pin an order to a removed farm.
+    var farm = String(o.farm || '');
+    var farmRec = farmById_(ss, farm);
+    if (!farmRec || !farmRec.active) {
+      return { success: false, code: 'UNKNOWN_FARM', error: 'That farm is no longer available. Please pick another.' };
+    }
     // Lock in the current price as the order's unit price. Server-side so
     // a tampered client can't underreport revenue, and so later price
-    // changes don't rewrite history.
+    // changes don't rewrite history. Prices are global (not per-farm).
     var currentPrices = readPrices(ss);
     var unitPrice     = Number(currentPrices[o.size]) || 0;
     var createdAt     = o.createdAt || Date.now();
@@ -555,9 +828,10 @@ function submitOrder(data) {
       o.id, asText_(o.name), asText_(o.contact), asText_(o.address),
       o.size, o.trays, asText_(o.notes || ''), 'pending', utcLabel_(createdAt),
       createdAt,
-      unitPrice
+      unitPrice,
+      farm
     ]);
-    logActivity(ss, 'Order: ' + o.name + ' — ' + o.trays + ' tray' + plural(o.trays) + ' ' + sizeMention_(o.size), 'customer');
+    logActivity(ss, 'Order: ' + o.name + ' — ' + o.trays + ' tray' + plural(o.trays) + ' ' + sizeMention_(o.size) + ' @ ' + farmRec.name, 'customer');
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();
@@ -692,7 +966,8 @@ function logStockEvent(ss, data, actor) {
   var ts = Date.now();
   sheet.appendRow([
     ts, utcLabel_(ts), data.size, data.delta, data.reason,
-    data.before, data.after, asText_(data.note || ''), asText_(actor || 'admin')
+    data.before, data.after, asText_(data.note || ''), asText_(actor || 'admin'),
+    data.farm || ''
   ]);
 }
 
@@ -722,7 +997,8 @@ function readStockEvents(ss) {
       before:    Number(rows[i][5]) || 0,
       after:     Number(rows[i][6]) || 0,
       note:      rows[i][7] || '',
-      actor:     rows[i][8] || 'admin'
+      actor:     rows[i][8] || 'admin',
+      farm:      rows[i][9] || null
     });
   }
   return out;
@@ -800,14 +1076,28 @@ function plural(n) {
 function setupSpreadsheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // Stock
+  // Farms (id, name, active, sortOrder). Seeded with one default farm so a
+  // fresh install has somewhere to hold stock and route orders.
+  var farms = getOrCreate(ss, SHEET_FARMS);
+  var defaultFarmId;
+  if (farms.getLastRow() === 0) {
+    farms.appendRow(['id', 'name', 'active', 'sortOrder']);
+    defaultFarmId = Utilities.getUuid();
+    farms.appendRow([defaultFarmId, asText_('Main Farm'), true, 1]);
+    farms.getRange('A1:D1').setFontWeight('bold');
+  } else {
+    var frows = farms.getDataRange().getValues();
+    defaultFarmId = frows.length > 1 ? String(frows[1][0]) : Utilities.getUuid();
+  }
+
+  // Stock [size, trays, farm]. Seed the default farm offering all sizes at 0.
   var stock = getOrCreate(ss, SHEET_STOCK);
   if (stock.getLastRow() === 0) {
-    stock.appendRow(['size', 'trays']);
+    stock.appendRow(['size', 'trays', 'farm']);
     ['small','medium','large','xl','jumbo'].forEach(function (s) {
-      stock.appendRow([s, 0]);
+      stock.appendRow([s, 0, defaultFarmId]);
     });
-    stock.getRange('A1:B1').setFontWeight('bold');
+    stock.getRange('A1:C1').setFontWeight('bold');
   }
 
   // Prices
@@ -823,8 +1113,8 @@ function setupSpreadsheet() {
   // Orders
   var orders = getOrCreate(ss, SHEET_ORDERS);
   if (orders.getLastRow() === 0) {
-    orders.appendRow(['id','name','contact','address','size','trays','notes','status','time','createdAt','unitPrice']);
-    orders.getRange('A1:K1').setFontWeight('bold');
+    orders.appendRow(['id','name','contact','address','size','trays','notes','status','time','createdAt','unitPrice','farm']);
+    orders.getRange('A1:L1').setFontWeight('bold');
   }
 
   // Sizes (key → label + sort order). The canonical list of egg sizes.
@@ -848,8 +1138,8 @@ function setupSpreadsheet() {
   // Stock events (structured restock/sale log)
   var stockEv = getOrCreate(ss, SHEET_STOCK_EVENTS);
   if (stockEv.getLastRow() === 0) {
-    stockEv.appendRow(['createdAt','time','size','delta','reason','before','after','note','actor']);
-    stockEv.getRange('A1:I1').setFontWeight('bold');
+    stockEv.appendRow(['createdAt','time','size','delta','reason','before','after','note','actor','farm']);
+    stockEv.getRange('A1:J1').setFontWeight('bold');
   }
 
   // Price events (structured price change log)
@@ -965,18 +1255,18 @@ function buildDashboard() {
   sheet.getRange(row, 1, 1, 5).setValues([['Size','Trays','Eggs','₱/tray','Value']])
     .setFontWeight('bold').setBackground('#F5E6D3').setFontColor('#6B4F3F');
   row += 1;
-  // One row per size in the sizes sheet, ordered by sortOrder, capped at
-  // the 10 rows we reserved below. Without ARRAY_CONSTRAIN the array
-  // would spill into the next section's header (row 24) and #REF! out.
+  // One row per size, driven by the sizes sheet (cols A=key, B=label) and
+  // ordered as the sizes sheet is. Stock is now per-farm ([size,trays,farm]),
+  // so a size can span several rows — SUMIF aggregates trays across all farms
+  // for each size. Prices are global. Bounded to the 10 rows reserved below.
   sheet.getRange(row, 1).setFormula(
-    '=IFERROR(ARRAY_CONSTRAIN(SORT(' +
-      'ARRAYFORMULA({' +
-        'IFERROR(VLOOKUP(stock!A2:A,sizes!A:B,2,FALSE),stock!A2:A),' +
-        'stock!B2:B,' +
-        'stock!B2:B*30,' +
-        'IFERROR(VLOOKUP(stock!A2:A,prices!A:B,2,FALSE),0),' +
-        'stock!B2:B*IFERROR(VLOOKUP(stock!A2:A,prices!A:B,2,FALSE),0)' +
-      '}),2,FALSE),10,5),"")'
+    '=IFERROR(ARRAY_CONSTRAIN(ARRAYFORMULA({' +
+        'sizes!B2:B11,' +
+        'SUMIF(stock!A:A,sizes!A2:A11,stock!B:B),' +
+        'SUMIF(stock!A:A,sizes!A2:A11,stock!B:B)*30,' +
+        'IFERROR(VLOOKUP(sizes!A2:A11,prices!A:B,2,FALSE),0),' +
+        'SUMIF(stock!A:A,sizes!A2:A11,stock!B:B)*IFERROR(VLOOKUP(sizes!A2:A11,prices!A:B,2,FALSE),0)' +
+      '}),10,5),"")'
   );
   // Reserve 10 rows for the table; format the value column as currency.
   sheet.getRange(row, 4, 10, 1).setNumberFormat('"₱"#,##0');
@@ -1126,7 +1416,10 @@ function migrate() {
   var report = [];
 
   ensureAllSheets_(ss, report);
+  seedInitialFarm_(ss, report);
   upgradeActivitySchema_(ss, report);
+  upgradeStockSchema_(ss, report);
+  upgradeStockEventsSchema_(ss, report);
   upgradeOrdersSchema_(ss, report);
   seedSizesSheet_(ss, report);
   seedInitialAdmin_(ss, report);
@@ -1281,13 +1574,32 @@ function listAdmins() {
   showResult_('Current admins:\n\n' + lines.join('\n'));
 }
 
+// Ensure the farms sheet exists with at least one farm; return the id of
+// the first (default) farm. Idempotent — used by setup/migrate to anchor
+// stock rows and order routing to a real farm.
+function ensureDefaultFarm_(ss) {
+  var sheet = ss.getSheetByName(SHEET_FARMS);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_FARMS);
+    sheet.appendRow(['id','name','active','sortOrder']);
+    sheet.getRange('A1:D1').setFontWeight('bold');
+  }
+  if (sheet.getLastRow() < 2) {
+    var id = Utilities.getUuid();
+    sheet.appendRow([id, asText_('Main Farm'), true, 1]);
+    return id;
+  }
+  return String(sheet.getRange(2, 1).getValue());
+}
+
 // 1. Make sure every sheet exists with its current header.
 function ensureAllSheets_(ss, report) {
   if (!ss.getSheetByName(SHEET_STOCK)) {
+    var farmId = ensureDefaultFarm_(ss);
     var s = ss.insertSheet(SHEET_STOCK);
-    s.appendRow(['size','trays']);
-    ['small','medium','large','xl','jumbo'].forEach(function (k) { s.appendRow([k, 0]); });
-    s.getRange('A1:B1').setFontWeight('bold');
+    s.appendRow(['size','trays','farm']);
+    ['small','medium','large','xl','jumbo'].forEach(function (k) { s.appendRow([k, 0, farmId]); });
+    s.getRange('A1:C1').setFontWeight('bold');
     report.push('• Created `stock` sheet');
   }
   if (!ss.getSheetByName(SHEET_PRICES)) {
@@ -1300,8 +1612,8 @@ function ensureAllSheets_(ss, report) {
   }
   if (!ss.getSheetByName(SHEET_ORDERS)) {
     var o = ss.insertSheet(SHEET_ORDERS);
-    o.appendRow(['id','name','contact','address','size','trays','notes','status','time','createdAt','unitPrice']);
-    o.getRange('A1:K1').setFontWeight('bold');
+    o.appendRow(['id','name','contact','address','size','trays','notes','status','time','createdAt','unitPrice','farm']);
+    o.getRange('A1:L1').setFontWeight('bold');
     report.push('• Created `orders` sheet');
   }
   if (!ss.getSheetByName(SHEET_ACTIVITY)) {
@@ -1328,10 +1640,14 @@ function ensureAllSheets_(ss, report) {
     ad.getRange('A1:E1').setFontWeight('bold');
     report.push('• Created `admins` sheet');
   }
+  if (!ss.getSheetByName(SHEET_FARMS)) {
+    ensureDefaultFarm_(ss);  // creates the sheet + a default "Main Farm"
+    report.push('• Created `farms` sheet with a default farm "Main Farm"');
+  }
   if (!ss.getSheetByName(SHEET_STOCK_EVENTS)) {
     var se = ss.insertSheet(SHEET_STOCK_EVENTS);
-    se.appendRow(['createdAt','time','size','delta','reason','before','after','note','actor']);
-    se.getRange('A1:I1').setFontWeight('bold');
+    se.appendRow(['createdAt','time','size','delta','reason','before','after','note','actor','farm']);
+    se.getRange('A1:J1').setFontWeight('bold');
     report.push('• Created `stock_events` sheet');
   }
   if (!ss.getSheetByName(SHEET_PRICE_EVENTS)) {
@@ -1374,12 +1690,12 @@ function seedInitialAdmin_(ss, report) {
     : '• Seeded default admin "Admin" with PIN 1234 — change it after first login');
 }
 
-// 2. Add missing columns to an older `orders` sheet (createdAt, unitPrice).
+// 2. Add missing columns to an older `orders` sheet (createdAt, unitPrice, farm).
 function upgradeOrdersSchema_(ss, report) {
   var orders = ss.getSheetByName(SHEET_ORDERS);
   if (!orders) return;
-  // Read enough columns to inspect headers J and K.
-  var width   = Math.max(orders.getLastColumn(), 11);
+  // Read enough columns to inspect headers J, K and L.
+  var width   = Math.max(orders.getLastColumn(), 12);
   var headers = orders.getRange(1, 1, 1, width).getValues()[0];
   if (headers[9] !== 'createdAt') {
     orders.getRange(1, 10).setValue('createdAt').setFontWeight('bold');
@@ -1388,6 +1704,70 @@ function upgradeOrdersSchema_(ss, report) {
   if (headers[10] !== 'unitPrice') {
     orders.getRange(1, 11).setValue('unitPrice').setFontWeight('bold');
     report.push('• Added `orders.unitPrice` column');
+  }
+  if (headers[11] !== 'farm') {
+    orders.getRange(1, 12).setValue('farm').setFontWeight('bold');
+    // Backfill existing orders to the default farm so history is coherent.
+    var last = orders.getLastRow();
+    if (last >= 2) {
+      var farmId = ensureDefaultFarm_(ss);
+      var col = orders.getRange(2, 12, last - 1, 1).getValues();
+      var n = 0;
+      for (var i = 0; i < col.length; i++) {
+        if (!col[i][0]) { col[i][0] = farmId; n++; }
+      }
+      orders.getRange(2, 12, last - 1, 1).setValues(col);
+      report.push('• Added `orders.farm` column and assigned ' + n + ' existing order' + (n === 1 ? '' : 's') + ' to "Main Farm"');
+    } else {
+      report.push('• Added `orders.farm` column');
+    }
+  }
+}
+
+// 2d. Add the `farm` column to an older 2-column stock sheet and assign every
+// existing (size) row to the default farm. Converts [size,trays] → [size,trays,farm].
+function upgradeStockSchema_(ss, report) {
+  var stock = ss.getSheetByName(SHEET_STOCK);
+  if (!stock) return;
+  var width   = Math.max(stock.getLastColumn(), 3);
+  var headers = stock.getRange(1, 1, 1, width).getValues()[0];
+  if (headers[2] === 'farm') return;  // already migrated
+  var farmId = ensureDefaultFarm_(ss);
+  stock.getRange(1, 3).setValue('farm').setFontWeight('bold');
+  var last = stock.getLastRow();
+  if (last >= 2) {
+    var col = stock.getRange(2, 3, last - 1, 1).getValues();
+    var n = 0;
+    for (var i = 0; i < col.length; i++) {
+      if (!col[i][0]) { col[i][0] = farmId; n++; }
+    }
+    stock.getRange(2, 3, last - 1, 1).setValues(col);
+    report.push('• Added `stock.farm` column and assigned ' + n + ' existing row' + (n === 1 ? '' : 's') + ' to "Main Farm"');
+  } else {
+    report.push('• Added `stock.farm` column');
+  }
+}
+
+// 2e. Add the `farm` column to an older stock_events sheet. Old events keep a
+// blank farm (we can't reconstruct which farm a historical sale came from).
+function upgradeStockEventsSchema_(ss, report) {
+  var se = ss.getSheetByName(SHEET_STOCK_EVENTS);
+  if (!se) return;
+  var width   = Math.max(se.getLastColumn(), 10);
+  var headers = se.getRange(1, 1, 1, width).getValues()[0];
+  if (headers[9] !== 'farm') {
+    se.getRange(1, 10).setValue('farm').setFontWeight('bold');
+    report.push('• Added `stock_events.farm` column (historical events show no farm)');
+  }
+}
+
+// 2f. Ensure the farms sheet has a default farm. Reports only on first creation.
+function seedInitialFarm_(ss, report) {
+  var sheet  = ss.getSheetByName(SHEET_FARMS);
+  var existed = sheet && sheet.getLastRow() > 1;
+  ensureDefaultFarm_(ss);
+  if (!existed) {
+    report.push('• Seeded default farm "Main Farm" — rename it and add more in the admin Farms panel');
   }
 }
 
@@ -1480,9 +1860,16 @@ function backfillStockEvents_(ss, report) {
   if (!parsed.length) return;
 
   // Walk backward to assign before/after using current stock as the anchor.
+  // Stock is per-farm now ({farm:{size:trays}}); this backfill reconstructs
+  // pre-multi-farm history (one farm), so anchor to the per-size total across
+  // all farms. Reconstructed events carry no farm (it can't be recovered).
   var running = {};
   var stock   = readStock(ss);
-  Object.keys(stock).forEach(function (k) { running[k] = Number(stock[k]) || 0; });
+  Object.keys(stock).forEach(function (farm) {
+    Object.keys(stock[farm]).forEach(function (size) {
+      running[size] = (running[size] || 0) + (Number(stock[farm][size]) || 0);
+    });
+  });
   for (var j = parsed.length - 1; j >= 0; j--) {
     var ev = parsed[j];
     if (running[ev.size] === undefined) running[ev.size] = 0;
@@ -1541,13 +1928,15 @@ function recoverMangledCells_(ss, report) {
 // Idempotent and cheap: setting the format on a whole column is one op.
 function applyTextFormats_(ss, report) {
   var textCols = [
-    { sheet: SHEET_ACTIVITY,      ranges: ['A:A'] },                       // action
-    { sheet: SHEET_ORDERS,        ranges: ['B:D', 'G:G', 'I:I'] },         // name, contact, address; notes; time
-    { sheet: SHEET_STOCK_EVENTS,  ranges: ['B:B', 'E:E', 'H:H', 'I:I'] },  // time, reason, note, actor
-    { sheet: SHEET_PRICE_EVENTS,  ranges: ['B:B', 'F:F'] },                // time, actor
-    { sheet: SHEET_CONFIG,        ranges: ['B:B'] },                       // value (PIN hash etc. — pure strings)
-    { sheet: SHEET_SIZES,         ranges: ['B:B'] },                       // label (freeform)
-    { sheet: SHEET_ADMINS,        ranges: ['B:B'] }                        // name (freeform)
+    { sheet: SHEET_ACTIVITY,      ranges: ['A:A'] },                            // action
+    { sheet: SHEET_ORDERS,        ranges: ['B:D', 'G:G', 'I:I', 'L:L'] },       // name, contact, address; notes; time; farm id
+    { sheet: SHEET_STOCK,         ranges: ['C:C'] },                            // farm id
+    { sheet: SHEET_STOCK_EVENTS,  ranges: ['B:B', 'E:E', 'H:H', 'I:I', 'J:J'] },// time, reason, note, actor, farm id
+    { sheet: SHEET_PRICE_EVENTS,  ranges: ['B:B', 'F:F'] },                     // time, actor
+    { sheet: SHEET_CONFIG,        ranges: ['B:B'] },                            // value (PIN hash etc. — pure strings)
+    { sheet: SHEET_SIZES,         ranges: ['B:B'] },                            // label (freeform)
+    { sheet: SHEET_ADMINS,        ranges: ['B:B'] },                            // name (freeform)
+    { sheet: SHEET_FARMS,         ranges: ['B:B'] }                             // name (freeform)
   ];
   var touched = 0;
   textCols.forEach(function (entry) {
