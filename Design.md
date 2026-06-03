@@ -78,7 +78,7 @@ included):
 | `addSize` / `deleteSize` | admin | Add/remove an egg size at runtime (global) |
 | `addAdmin` / `deleteAdmin` / `renameAdmin` | admin | Manage admins |
 | `addFarm` / `renameFarm` / `setFarmActive` / `deleteFarm` | admin | Manage farms (soft-deactivate or hard-delete) |
-| `addFarmSize` / `removeFarmSize` | admin | Choose which sizes a farm offers (creates/removes its `(size,farm)` stock row) |
+| `addFarmSize` / `removeFarmSize` | admin | Choose which sizes a farm offers (creates/removes its `(size,farm)` stock row). `addFarmSize` also *creates* a brand-new size inline when given an unknown key + label (it joins the shared catalog) |
 | `changePIN` | admin | Rotate the calling admin's PIN |
 
 Every admin action returns the **fresh `state`** so the client updates
@@ -113,12 +113,21 @@ size list stay global. A size is **offered per farm** — the presence of a
 sizes it actually produces. Stock is keyed by `(size, farm)`; `readStock()`
 returns it nested as `{ farmId: { size: trays } }`.
 
-Sizes are **not hardcoded**. The seed set is small/medium/large/xl/jumbo, but
-`addSize`/`deleteSize` mutate the `sizes` tab. `addSize` seeds only the global
-`prices` row (a new size starts offered by no farm; farms opt in via
-`addFarmSize`); `deleteSize` clears the price row and every farm's `(size,*)`
-stock rows. `sizeLabel()` resolves a key to its display label from the `sizes`
-tab, falling back to a built-in map then the raw key.
+Sizes are **not hardcoded**. The seed set is small/medium/large/xl/jumbo, and
+the `sizes` tab is a **shared catalog** (keys + labels + global prices) — but
+it is **managed per-farm** in the UI: there is no standalone "egg sizes"
+screen. From a farm you offer an existing catalog size or create a new one
+inline (`addFarmSize` with a new key+label appends to `sizes`, seeds a global
+`prices` row at 0, and adds the farm's `(size,farm)` stock row). `removeFarmSize`
+stops a farm offering a size; a size offered by no farm simply lingers in the
+catalog (its price is remembered if re-offered). The `addSize`/`deleteSize`
+handlers remain in the backend for API completeness but are no longer surfaced.
+`sizeLabel()` resolves a key to its display label from the `sizes` tab, falling
+back to a built-in map then the raw key.
+
+The Inventory page shows stock **both** as a "Total across farms" table and as
+a per-farm breakdown; customer-facing totals/availability count **active farms
+only** (deactivated-farm stock isn't orderable, so it's excluded there).
 
 All timestamps are written twice: a human-readable **UTC** string (`time`) so
 anyone opening the Sheet sees an unambiguous value, plus an epoch-ms

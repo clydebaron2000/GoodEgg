@@ -11,9 +11,9 @@ Add it to your phone's home screen (Share → Add to Home Screen on iOS, ⋮ →
 ## What it does
 
 - **Customers** — pick a farm, view its stock per size, view per-tray prices, and place orders. No login.
-- **Admins** — everything above, plus add/deduct stock per farm, confirm/close/delete orders, edit prices, add/remove egg sizes, manage farms (and which sizes each offers), manage other admins, and change their PIN. Gated by a 4-digit PIN. Multiple admins are supported, and each write is attributed to the admin who made it.
+- **Admins** — everything above, plus add/deduct stock per farm, confirm/close/delete orders, edit prices, manage farms and the egg sizes each farm offers (creating new sizes inline), manage other admins, and change their PIN. Gated by a 4-digit PIN. Multiple admins are supported, and each write is attributed to the admin who made it.
 
-Multiple farms are supported: each farm holds its own stock and an order draws from one farm. Prices and the size list are shared across farms. Sizes are runtime-editable (default set: small, medium, large, XL, jumbo) and offered per-farm. Quantities are in trays (default 30 eggs per tray). Prices are in PHP.
+Multiple farms are supported: each farm holds its own stock and an order draws from one farm. Egg sizes are managed per-farm (no separate sizes screen) but share one catalog and one set of global prices; the default set is small, medium, large, XL, jumbo. The Inventory page shows stock per farm and as a combined total. Quantities are in trays (default 30 eggs per tray). Prices are in PHP.
 
 ---
 

@@ -480,32 +480,14 @@
   <div class="page active" id="page-inventory">
     <div class="metrics-grid" id="metrics-grid"></div>
     <div class="card">
-      <div class="card-title"><i class="ti ti-layout-grid"></i>Stock by size</div>
+      <div class="card-title"><i class="ti ti-layout-grid"></i>Total stock across farms</div>
       <table class="inv-table">
         <thead><tr><th>Size</th><th>Trays</th><th>Eggs</th><th>Status</th></tr></thead>
         <tbody id="stock-tbody"></tbody>
       </table>
     </div>
+    <div id="farm-stock"></div>
     <div id="admin-inventory-section" style="display:none;">
-      <div class="card">
-        <div class="card-title"><i class="ti ti-egg"></i>Egg sizes</div>
-        <p style="font-size:13px;color:var(--text-sec);margin-bottom:12px;">
-          Add or remove the egg types this farm tracks. Deleting a size removes its stock count, current price, and excludes it from new orders. Existing orders for a deleted size are kept but show the raw key.
-        </p>
-        <div id="size-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;"></div>
-        <div class="row2">
-          <div class="field">
-            <label>Key (lowercase, no spaces)</label>
-            <input type="text" id="new-size-key" placeholder="e.g. extra-large" maxlength="32" />
-          </div>
-          <div class="field">
-            <label>Display label</label>
-            <input type="text" id="new-size-label" placeholder="e.g. Extra Large" maxlength="48" />
-          </div>
-        </div>
-        <button class="btn btn-primary" id="btn-add-size" onclick="addSize()"><i class="ti ti-plus"></i>Add egg size</button>
-      </div>
-
       <div class="card">
         <div class="card-title"><i class="ti ti-building-warehouse"></i>Farms</div>
         <p style="font-size:13px;color:var(--text-sec);margin-bottom:12px;">
@@ -523,7 +505,7 @@
         <div class="card-title"><i class="ti ti-circle-plus"></i>Collect today's eggs</div>
         <div class="field">
           <label>Farm</label>
-          <select id="add-farm"></select>
+          <select id="add-farm" onchange="onAddFarmChange()"></select>
         </div>
         <div class="row2">
           <div class="field">
@@ -927,6 +909,12 @@ function stockTotal(size) {
   for (const f in state.stock) t += Number(state.stock[f][size]) || 0;
   return t;
 }
+// Total across ACTIVE farms only — what customers can actually order. The
+// customer-facing Inventory page uses this so deactivated-farm stock doesn't
+// inflate "available" numbers.
+function activeStockTotal(size) {
+  return activeFarms().reduce((t, f) => t + stockAt(f.id, size), 0);
+}
 // Sizes a farm currently offers (a (farm,size) stock row exists), in SIZE_ORDER.
 function farmSizes(farmId) {
   const f = state.stock[farmId] || {};
@@ -962,9 +950,10 @@ function sizeMention(key) {
 // a background poll doesn't reset a form the user is filling out.
 function populateSizeSelects() {
   populateFarmSelects();
-  // add-size: every global size (adding stock can start a farm offering one)
-  fillSelect_('add-size', SIZE_ORDER.map(k => ({ value: k, label: SIZE_LABELS[k] || k })));
-  // res-size and deduct-size are scoped to their farm dropdown's selection
+  // add-size, res-size and deduct-size are all scoped to their farm dropdown's
+  // selection — you restock / sell / order the sizes that farm actually offers.
+  // (New sizes are added per-farm from the Farms panel.)
+  populateAddSizeSelect();
   populateResSizeSelect();
   populateDeductSizeSelect();
 }
@@ -1015,9 +1004,18 @@ function populateDeductSizeSelect() {
   fillSelect_('deduct-size', farmSizes(farm).map(k => ({ value: k, label: SIZE_LABELS[k] || k })));
 }
 
+// Admin add-stock picker: the sizes the chosen farm offers. To stock a size a
+// farm doesn't carry yet, add it to the farm first (Farms panel).
+function populateAddSizeSelect() {
+  const farmEl = document.getElementById('add-farm');
+  const farm   = (farmEl && farmEl.value) || selectedFarm;
+  fillSelect_('add-size', farmSizes(farm).map(k => ({ value: k, label: SIZE_LABELS[k] || k })));
+}
+
 // onchange handlers wired from the HTML selects.
 function onResFarmChange(v)    { selectedFarm = v; populateResSizeSelect(); }
 function onDeductFarmChange()  { populateDeductSizeSelect(); }
+function onAddFarmChange()     { populateAddSizeSelect(); }
 
 // ── Optimistic-update helpers ─────────────────────────────────
 // snapshot() captures a deep copy of the state so we can roll back
@@ -1045,7 +1043,7 @@ function restoreSnapshot(snap) {
   populateSizeSelects();
   renderAll();
 }
-function renderAll() { renderSizes(); renderFarms(); renderInventory(); renderPricing(); renderOrders(); }
+function renderAll() { renderFarms(); renderInventory(); renderPricing(); renderOrders(); }
 function pushActivity(text) {
   // Stamp with a real epoch so the activity row renders in the user's local
   // timezone via formatTime(). When the server response lands it'll
@@ -1289,40 +1287,12 @@ function getStatus(trays) {
   return '<span class="badge badge-good">In stock</span>';
 }
 
-// Admin-only list of egg sizes with delete buttons. Hidden when not admin
-// (its container lives inside #admin-inventory-section), but renderSizes
-// still runs so the DOM stays in sync.
-function renderSizes() {
-  const container = document.getElementById('size-list');
-  if (!container) return;
-  if (!state.sizes.length) {
-    container.innerHTML = '<div class="empty-state" style="padding:14px;"><p style="font-size:13px;">No sizes configured yet — add one below.</p></div>';
-    return;
-  }
-  const sorted = state.sizes.slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-  container.innerHTML = sorted.map(s => {
-    const trays = stockTotal(s.key);
-    const price = Number(state.prices[s.key]) || 0;
-    const warn  = trays > 0;
-    return `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--gray-bg);border-radius:8px;">
-        <div style="min-width:0;flex:1;">
-          <div style="font-weight:600;font-size:14px;">${s.label}</div>
-          <div style="font-size:11px;color:var(--text-sec);font-family:ui-monospace,monospace;">
-            ${s.key} · ${trays} tray${trays === 1 ? '' : 's'} · ₱${price}/tray${warn ? ' · <span style="color:var(--amber-800);">⚠ has stock</span>' : ''}
-          </div>
-        </div>
-        <button class="btn btn-danger btn-sm" onclick="deleteSize('${s.key}')" title="Delete this egg size">
-          <i class="ti ti-trash"></i>
-        </button>
-      </div>`;
-  }).join('');
-}
-
 function renderInventory() {
-  const total   = SIZE_ORDER.reduce((s,k) => s + stockTotal(k), 0);
-  const low     = SIZE_ORDER.filter(k => stockTotal(k) > 0 && stockTotal(k) <= 5).length;
-  const out     = SIZE_ORDER.filter(k => stockTotal(k) === 0).length;
+  // Sizes offered by at least one active farm — the orderable set.
+  const liveSizes = SIZE_ORDER.filter(k => activeFarms().some(f => farmSizes(f.id).includes(k)));
+  const total   = liveSizes.reduce((s,k) => s + activeStockTotal(k), 0);
+  const low     = liveSizes.filter(k => activeStockTotal(k) > 0 && activeStockTotal(k) <= 5).length;
+  const out     = liveSizes.filter(k => activeStockTotal(k) === 0).length;
   const pending = (state.orders || []).filter(o => o.status === 'pending').length;
 
   document.getElementById('metrics-grid').innerHTML = `
@@ -1345,15 +1315,19 @@ function renderInventory() {
       <div class="metric-label" style="${out > 0 ? 'color:var(--red-800)' : ''}">Out of stock</div>
     </div>`;
 
-  document.getElementById('stock-tbody').innerHTML = SIZE_ORDER.map(k => {
-    const t = stockTotal(k);
-    return `
+  document.getElementById('stock-tbody').innerHTML = liveSizes.length
+    ? liveSizes.map(k => {
+        const t = activeStockTotal(k);
+        return `
     <tr>
-      <td><span class="size-name">${SIZE_LABELS[k]}</span></td>
+      <td><span class="size-name">${SIZE_LABELS[k] || k}</span></td>
       <td><span class="tray-count">${t}</span></td>
       <td>${t * EGGS_PER_TRAY}</td>
       <td>${getStatus(t)}</td>
-    </tr>`; }).join('');
+    </tr>`; }).join('')
+    : `<tr><td colspan="4" style="padding:14px;color:var(--text-ter);font-size:13px;">No active farms offer any sizes yet.</td></tr>`;
+
+  renderFarmStock();
 
   const log = (state.activity || []).slice(-10).reverse();
   document.getElementById('activity-log').innerHTML = log.length === 0
@@ -1366,6 +1340,36 @@ function renderInventory() {
         </span>
         <span class="activity-time">${formatTime(a.createdAt) || a.time || ''}</span>
       </div>`).join('');
+}
+
+// Per-farm stock breakdown on the Inventory page (visible to everyone),
+// complementing the "Total across farms" table above. Active farms only.
+function renderFarmStock() {
+  const container = document.getElementById('farm-stock');
+  if (!container) return;
+  const farms = activeFarms();
+  container.innerHTML = farms.map(f => {
+    const sizes = farmSizes(f.id);
+    const rows = sizes.length
+      ? sizes.map(k => {
+          const t = stockAt(f.id, k);
+          return `<tr>
+            <td><span class="size-name">${SIZE_LABELS[k] || k}</span></td>
+            <td><span class="tray-count">${t}</span></td>
+            <td>${t * EGGS_PER_TRAY}</td>
+            <td>${getStatus(t)}</td>
+          </tr>`;
+        }).join('')
+      : `<tr><td colspan="4" style="padding:12px;color:var(--text-ter);font-size:13px;">No sizes offered yet.</td></tr>`;
+    return `
+      <div class="card">
+        <div class="card-title"><i class="ti ti-building-warehouse"></i>${escapeHtml(f.name)}</div>
+        <table class="inv-table">
+          <thead><tr><th>Size</th><th>Trays</th><th>Eggs</th><th>Status</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).join('');
 }
 
 function renderPricing() {
@@ -1533,6 +1537,7 @@ async function addStock() {
   const trays = parseInt(document.getElementById('add-trays').value);
   const note  = document.getElementById('add-note').value.trim();
   if (!farm)               { showToast('Pick a farm', true); return; }
+  if (!size)               { showToast('This farm offers no sizes yet — add one in the Farms panel', true); return; }
   if (!trays || trays < 1) { showToast('Enter a valid tray count', true); return; }
 
   // Optimistic: apply locally now so the UI feels instant.
@@ -1820,13 +1825,19 @@ function renderFarms() {
           </span>`;
         }).join('')
       : '<span style="font-size:12px;color:var(--text-ter);">No sizes offered yet.</span>';
+    // Offer an existing catalog size this farm doesn't carry yet, or create a
+    // brand-new size (which joins the shared catalog).
     const addable = SIZE_ORDER.filter(k => !offered.includes(k));
-    const addControl = addable.length
+    const offerExisting = addable.length
       ? `<div style="display:flex;gap:6px;margin-top:8px;">
            <select id="farmsize-add-${f.id}" style="flex:1;">${addable.map(k => `<option value="${k}">${SIZE_LABELS[k] || k}</option>`).join('')}</select>
            <button class="btn btn-outline btn-sm" onclick="addFarmSizeFromUI('${f.id}')"><i class="ti ti-plus"></i>Offer size</button>
          </div>`
-      : '<div style="font-size:11px;color:var(--text-ter);margin-top:8px;">Offers every size.</div>';
+      : '';
+    const addControl = offerExisting +
+      `<div style="margin-top:8px;">
+         <button class="btn btn-outline btn-sm" onclick="createFarmSizeFromUI('${f.id}')"><i class="ti ti-plus"></i>New size…</button>
+       </div>`;
     const cantDeactivate = f.active && activeCount === 1;
     const toggleTitle = f.active ? (cantDeactivate ? 'Cannot deactivate the last active farm' : 'Deactivate (hide from customers)') : 'Activate';
     return `
@@ -1922,6 +1933,24 @@ async function addFarmSizeFromUI(id) {
   await farmAction_({ action: 'addFarmSize', farm: id, size }, null, null, `${farmName(id)} now offers ${SIZE_LABELS[size] || size}`, null);
 }
 
+// Create a brand-new egg size and offer it at this farm. The size joins the
+// shared catalog (so other farms can offer it too); its price starts at 0 and
+// is set on the Pricing page.
+async function createFarmSizeFromUI(id) {
+  if (!isAdmin) return;
+  const label = prompt('New egg size name (e.g. Extra Large):');
+  if (label == null) return;
+  const name = label.trim();
+  if (!name) { showToast('Enter a size name', true); return; }
+  const key = name.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
+  if (!key) { showToast('Use letters or digits in the name', true); return; }
+  if (state.sizes.some(s => s.key === key) && farmSizes(id).includes(key)) {
+    showToast(`${farmName(id)} already offers ${SIZE_LABELS[key] || key}`, true); return;
+  }
+  await farmAction_({ action: 'addFarmSize', farm: id, size: key, label: name },
+    null, null, `Added ${name} to ${farmName(id)}`, null);
+}
+
 async function removeFarmSizeFromUI(id, size) {
   if (!isAdmin) return;
   const n = stockAt(id, size);
@@ -1929,102 +1958,6 @@ async function removeFarmSizeFromUI(id, size) {
   if (n > 0) msg += `\n\n⚠️ This erases ${n} tray${n===1?'':'s'} of stock.`;
   if (!confirm(msg)) return;
   await farmAction_({ action: 'removeFarmSize', farm: id, size }, null, null, `Removed ${SIZE_LABELS[size] || size} from ${farmName(id)}`, null);
-}
-
-// ═══════════════════════════════════════════════
-// ACTIONS — EGG SIZES
-// ═══════════════════════════════════════════════
-async function addSize() {
-  if (!isAdmin) return;
-  const keyEl   = document.getElementById('new-size-key');
-  const labelEl = document.getElementById('new-size-label');
-  const key     = (keyEl.value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
-  const label   = (labelEl.value || '').trim() || (key ? key.charAt(0).toUpperCase() + key.slice(1) : '');
-  if (!key)   { showToast('Enter a size key (letters, digits, - or _)', true); return; }
-  if (!label) { showToast('Enter a display label', true); return; }
-  if (state.sizes.some(s => s.key === key)) { showToast(`Size "${key}" already exists`, true); return; }
-
-  // Optimistic
-  const snap     = snapshot();
-  const nextOrder = state.sizes.reduce((m, s) => Math.max(m, s.sortOrder || 0), 0) + 1;
-  state.sizes.push({ key, label, sortOrder: nextOrder });
-  // No stock seeding: a new size is offered per-farm via the Farms panel.
-  state.prices[key] = 0;
-  refreshSizeConstants();
-  populateSizeSelects();
-  pushActivity(`Added egg size: ${label} (${key})`);
-  keyEl.value = '';
-  labelEl.value = '';
-  renderAll();
-
-  const btn = document.getElementById('btn-add-size');
-  setLoading(btn, true, 'Adding…');
-  actionStart();
-  setSyncStatus('syncing');
-  try {
-    const res = await callScript({ action: 'addSize', key, label, adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash });
-    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
-    if (res.state) applyState(res.state);
-    setSyncStatus('ok');
-    showToast(`Added "${label}"`);
-  } catch (e) {
-    restoreSnapshot(snap);
-    setSyncStatus('error');
-    showToast('Failed to add. Check connection.', true);
-  } finally {
-    actionEnd();
-    setLoading(btn, false, '<i class="ti ti-plus"></i>Add egg size');
-  }
-}
-
-async function deleteSize(key) {
-  if (!isAdmin) return;
-  const size = state.sizes.find(s => s.key === key);
-  if (!size) return;
-  const trays = stockTotal(key);
-  const price = Number(state.prices[key]) || 0;
-
-  // Confirmation pop-up; harder warning when there's still stock.
-  let msg;
-  if (trays > 0) {
-    msg = `⚠️ "${size.label}" still has ${trays} tray${trays === 1 ? '' : 's'} in stock.\n\n` +
-          `Deleting will erase those trays and the current price of ₱${price}/tray. ` +
-          `Existing orders for ${size.label} stay in the system but will display the raw key "${key}".\n\n` +
-          `Are you sure you want to delete this size?`;
-  } else {
-    msg = `Delete egg size "${size.label}" (${key})?\n\n` +
-          `Existing orders for this size are kept but will display the raw key.`;
-  }
-  if (!confirm(msg)) return;
-
-  // Optimistic
-  const snap = snapshot();
-  state.sizes = state.sizes.filter(s => s.key !== key);
-  for (const f in state.stock) delete state.stock[f][key];  // remove from every farm
-  delete state.prices[key];
-  refreshSizeConstants();
-  populateSizeSelects();
-  let actMsg = `Deleted egg size: ${size.label} (${key})`;
-  if (trays > 0) actMsg += ` — erased ${trays} tray${trays === 1 ? '' : 's'} of stock`;
-  if (price > 0) actMsg += (trays > 0 ? ',' : ' —') + ` priced at ₱${price}/tray`;
-  pushActivity(actMsg);
-  renderAll();
-
-  actionStart();
-  setSyncStatus('syncing');
-  try {
-    const res = await callScript({ action: 'deleteSize', key, adminId: currentAdmin && currentAdmin.id, pinHash: adminPinHash });
-    if (res.error) { restoreSnapshot(snap); setSyncStatus('error'); showToast(res.error, true); return; }
-    if (res.state) applyState(res.state);
-    setSyncStatus('ok');
-    showToast(`Deleted "${size.label}"`);
-  } catch (e) {
-    restoreSnapshot(snap);
-    setSyncStatus('error');
-    showToast('Failed to delete. Check connection.', true);
-  } finally {
-    actionEnd();
-  }
 }
 
 // ═══════════════════════════════════════════════
@@ -2244,7 +2177,7 @@ if (new URLSearchParams(location.search).get('mock') === '1') {
   // Local E2E: load the in-memory mock backend, then boot against it.
   // Zero effect on production — only runs when ?mock=1 is in the URL.
   const s = document.createElement('script');
-  s.src = 'dev/mock-backend.js';
+  s.src = 'dev/mock-backend.js?v=' + Date.now();  // cache-bust so edits load
   s.onload = () => loadState().then(startPolling);
   s.onerror = () => showToast('Could not load dev/mock-backend.js', true);
   document.head.appendChild(s);

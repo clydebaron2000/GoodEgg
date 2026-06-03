@@ -557,24 +557,39 @@ function deleteFarm(data) {
 }
 
 // A farm starts offering a size: create a (size, farm) stock row at 0 trays.
+// Sizes are a shared catalog but managed per-farm: if `data.size` is a new key
+// (no matching row in the `sizes` tab), it is created on the fly from
+// `data.label` and seeded with a global price row at 0. Existing keys are just
+// offered at this farm.
 function addFarmSize(data) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
     var ss   = SpreadsheetApp.getActiveSpreadsheet();
     var farm = String(data.farm || '');
-    var size = String(data.size || '');
+    var size = String(data.size || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
     if (!farmById_(ss, farm)) return { error: 'Unknown farm', code: 'UNKNOWN_FARM' };
-    if (!readSizes(ss).some(function (s) { return s.key === size; })) {
-      return { error: 'Unknown size' };
+    if (!size) return { error: 'Size key is required' };
+
+    var sizes  = readSizes(ss);
+    var exists = sizes.some(function (s) { return s.key === size; });
+    if (!exists) {
+      // Create the size in the shared catalog: append to `sizes` + seed a
+      // global price row. (Prices are global; this farm sets stock per size.)
+      var label = String(data.label || '').trim() || (size.charAt(0).toUpperCase() + size.slice(1));
+      var nextOrder = sizes.reduce(function (m, s) { return Math.max(m, s.sortOrder); }, 0) + 1;
+      ss.getSheetByName(SHEET_SIZES).appendRow([size, asText_(label), nextOrder]);
+      ss.getSheetByName(SHEET_PRICES).appendRow([size, 0]);
     }
+
     var sheet = ss.getSheetByName(SHEET_STOCK);
     var rows  = sheet.getDataRange().getValues();
     if (findStockRow_(rows, size, farm) !== -1) {
       return { error: 'Farm already offers that size' };
     }
     sheet.appendRow([size, 0, farm]);
-    logActivity(ss, farmName_(ss, farm) + ' now offers ' + sizeMention_(size), data._admin && data._admin.name);
+    var verb = exists ? ' now offers ' : ' added new egg size ';
+    logActivity(ss, farmName_(ss, farm) + verb + sizeMention_(size), data._admin && data._admin.name);
     return { success: true, state: getState() };
   } finally {
     lock.releaseLock();

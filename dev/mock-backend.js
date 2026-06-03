@@ -224,11 +224,20 @@
 
     addFarmSize: function (d) {
       if (!farmById(d.farm)) return { error: 'Unknown farm', code: 'UNKNOWN_FARM' };
-      if (!DB.sizes.some(function (s) { return s.key === d.size; })) return { error: 'Unknown size' };
+      var size = String(d.size || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
+      if (!size) return { error: 'Size key is required' };
+      var exists = DB.sizes.some(function (s) { return s.key === size; });
+      if (!exists) {
+        // Create in the shared catalog + seed a global price (mirrors Code.gs).
+        var label = String(d.label || '').trim() || (size.charAt(0).toUpperCase() + size.slice(1));
+        var next = DB.sizes.reduce(function (m, s) { return Math.max(m, s.sortOrder); }, 0) + 1;
+        DB.sizes.push({ key: size, label: label, sortOrder: next });
+        DB.prices[size] = 0;
+      }
       if (!DB.stock[d.farm]) DB.stock[d.farm] = {};
-      if (DB.stock[d.farm][d.size] !== undefined) return { error: 'Farm already offers that size' };
-      DB.stock[d.farm][d.size] = 0;
-      log(farmById(d.farm).name + ' now offers ' + d.size, d.actorName);
+      if (DB.stock[d.farm][size] !== undefined) return { error: 'Farm already offers that size' };
+      DB.stock[d.farm][size] = 0;
+      log(farmById(d.farm).name + (exists ? ' now offers ' : ' added new egg size ') + size, d.actorName);
       return ok();
     },
 
