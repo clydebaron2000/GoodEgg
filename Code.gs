@@ -533,6 +533,18 @@ function deleteFarm(data) {
     if (target.active && activeOthers.length === 0) {
       return { error: 'Cannot remove the last active farm' };
     }
+    // Refuse to hard-delete a farm that any order references — deleting it
+    // would orphan those orders (they'd display a raw farm id). Deactivating
+    // hides the farm from customers while keeping its name and history.
+    var orders = ss.getSheetByName(SHEET_ORDERS).getDataRange().getValues();
+    var refs = 0;
+    for (var r = 1; r < orders.length; r++) {
+      if (String(orders[r][11] || '') === targetId) refs++;
+    }
+    if (refs > 0) {
+      return { error: 'This farm has ' + refs + ' order' + plural(refs) +
+                      ' — deactivate it instead of deleting to keep order history.' };
+    }
     // Remove the farm row.
     var sheet = ss.getSheetByName(SHEET_FARMS);
     var rows  = sheet.getDataRange().getValues();
@@ -833,11 +845,46 @@ function submitOrder(data) {
     if (!farmRec || !farmRec.active) {
       return { success: false, code: 'UNKNOWN_FARM', error: 'That farm is no longer available. Please pick another.' };
     }
+
     // Lock in the current price as the order's unit price. Server-side so
     // a tampered client can't underreport revenue, and so later price
     // changes don't rewrite history. Prices are global (not per-farm).
     var currentPrices = readPrices(ss);
     var unitPrice     = Number(currentPrices[o.size]) || 0;
+    // Reject orders for an unpriced size — a size can be offered before its
+    // price is set, and a ₱0 order is almost certainly a mistake, not a giveaway.
+    if (unitPrice <= 0) {
+      return { success: false, code: 'UNPRICED', error: sizeLabel(o.size) + ' is not priced yet — please pick another size.' };
+    }
+
+    // Soft stock reservation, per (farm, size): don't oversell against orders
+    // already in the pipeline. Sum the trays of every still-PENDING order for
+    // this farm+size, then require the un-reserved stock to cover the request.
+    // Computed under the same script lock that deductStock holds, so two
+    // last-tray orders can't both read "enough" before either lands. We reuse
+    // the `existing` rows already read for dedup (size=col 4, trays=col 5,
+    // status=col 7, farm=col 11).
+    var requested    = Number(o.trays) || 0;
+    var pendingTrays = 0;
+    for (var p = 1; p < existing.length; p++) {
+      if (existing[p][7] === 'pending' && existing[p][4] === o.size &&
+          String(existing[p][11] || '') === farm) {
+        pendingTrays += Number(existing[p][5]) || 0;
+      }
+    }
+    var stockMap  = readStock(ss);
+    var onHand    = (stockMap[farm] && Number(stockMap[farm][o.size])) || 0;
+    var available = onHand - pendingTrays;
+    if (requested > available) {
+      var left = Math.max(0, available);
+      return {
+        success: false,
+        code: 'INSUFFICIENT_STOCK',
+        error: 'Sorry, only ' + left + ' tray' + plural(left) + ' of ' + sizeLabel(o.size) +
+               ' left at ' + farmRec.name + ' right now.'
+      };
+    }
+
     var createdAt     = o.createdAt || Date.now();
     sheet.appendRow([
       o.id, asText_(o.name), asText_(o.contact), asText_(o.address),

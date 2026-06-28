@@ -70,14 +70,14 @@ included):
 | Action | Auth | Effect |
 |---|---|---|
 | `verifyPIN` | public | Check a PIN; returns the resolved admin |
-| `submitOrder` | public | Create an order (idempotent by client UUID) |
+| `submitOrder` | public | Create an order (idempotent by client UUID). Validates the farm is active, the size is priced (rejects `UNPRICED`), and reserves stock per `(farm,size)` against pending orders (rejects `INSUFFICIENT_STOCK`) |
 | `addStock` / `deductStock` | admin | Adjust tray counts; logs a stock event |
 | `savePrices` | admin | Update per-tray prices; logs price events |
 | `updateOrderStatus` | admin | pending → confirmed → done |
 | `deleteOrder` | admin | Remove an order (full row snapshotted to activity) |
 | `addSize` / `deleteSize` | admin | Add/remove an egg size at runtime (global) |
 | `addAdmin` / `deleteAdmin` / `renameAdmin` | admin | Manage admins |
-| `addFarm` / `renameFarm` / `setFarmActive` / `deleteFarm` | admin | Manage farms (soft-deactivate or hard-delete) |
+| `addFarm` / `renameFarm` / `setFarmActive` / `deleteFarm` | admin | Manage farms. `deleteFarm` is refused while any order references the farm (deactivate instead, to keep order history) |
 | `addFarmSize` / `removeFarmSize` | admin | Choose which sizes a farm offers (creates/removes its `(size,farm)` stock row). `addFarmSize` also *creates* a brand-new size inline when given an unknown key + label (it joins the shared catalog) |
 | `changePIN` | admin | Rotate the calling admin's PIN |
 
@@ -236,9 +236,8 @@ PIN reset: delete the `adminPinHash` value (legacy `config` row) / the relevant
 | Sales reports | The `Dashboard` tab + `stock_events`/`price_events`; export to CSV |
 | Stronger auth | Build on the per-admin `admins` tab (e.g. phone OTP) |
 | Per-farm pricing | Prices are currently global; a `(size,farm)` price table would let farms price independently |
-| Per-farm soft reservation | The `feat/soft-stock-reservation` branch reserves pending-order trays; reconcile it to reserve per `(size,farm)` when both land |
 
-> **Shipped:** *Multiple farms* (each farm holds its own stock; orders draw from one farm) is now implemented — see §4.
+> **Shipped:** *Multiple farms* (each farm holds its own stock; orders draw from one farm) is now implemented — see §4. `submitOrder` reserves stock per `(farm,size)` against still-pending orders, so this supersedes the single-farm reservation on `feat/soft-stock-reservation` (that branch's `submitOrder` is the conflict to resolve in multi-farm's favour when the two merge).
 
 §9 is about *new* features. §10 below is about hardening what already ships.
 

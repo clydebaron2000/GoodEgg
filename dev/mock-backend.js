@@ -103,6 +103,20 @@
         return { success: false, code: 'UNKNOWN_FARM', error: 'That farm is no longer available. Please pick another.' };
       }
       var unit = Number(DB.prices[o.size]) || 0;
+      if (unit <= 0) {
+        return { success: false, code: 'UNPRICED', error: o.size + ' is not priced yet — please pick another size.' };
+      }
+      // Per-(farm,size) soft reservation — don't oversell against pending orders.
+      var pending = DB.orders.reduce(function (s, r) {
+        return (r.status === 'pending' && r.size === o.size && r.farm === o.farm) ? s + (Number(r.trays) || 0) : s;
+      }, 0);
+      var onHand = (DB.stock[o.farm] && Number(DB.stock[o.farm][o.size])) || 0;
+      var available = onHand - pending;
+      if ((Number(o.trays) || 0) > available) {
+        var left = Math.max(0, available);
+        return { success: false, code: 'INSUFFICIENT_STOCK',
+                 error: 'Sorry, only ' + left + ' tray(s) of ' + o.size + ' left at ' + farm.name + ' right now.' };
+      }
       DB.orders.push({
         id: o.id, name: o.name, contact: o.contact, address: o.address,
         size: o.size, trays: o.trays, notes: o.notes || '', status: 'pending',
@@ -215,6 +229,10 @@
       if (!f) return { error: 'Farm not found' };
       if (f.active && activeFarms().filter(function (x) { return x.id !== f.id; }).length === 0) {
         return { error: 'Cannot remove the last active farm' };
+      }
+      var refs = DB.orders.filter(function (o) { return o.farm === d.targetId; }).length;
+      if (refs > 0) {
+        return { error: 'This farm has ' + refs + ' order(s) — deactivate it instead of deleting to keep order history.' };
       }
       DB.farms = DB.farms.filter(function (x) { return x.id !== d.targetId; });
       delete DB.stock[d.targetId];

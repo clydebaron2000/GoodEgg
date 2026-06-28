@@ -991,8 +991,13 @@ function populateResSizeSelect() {
   }
   sel.innerHTML = sizes.map(k => {
     const avail = stockAt(farm, k);
-    const tag   = avail > 0 ? `${avail} tray${avail === 1 ? '' : 's'}` : 'out of stock';
-    return `<option value="${k}"${avail <= 0 ? ' disabled' : ''}>${SIZE_LABELS[k] || k} — ${tag}</option>`;
+    const priced = (Number(state.prices[k]) || 0) > 0;
+    // A size with no price set yet can't be ordered — disable it.
+    const tag = !priced ? 'price not set'
+              : avail > 0 ? `${avail} tray${avail === 1 ? '' : 's'}`
+              : 'out of stock';
+    const disabled = (!priced || avail <= 0) ? ' disabled' : '';
+    return `<option value="${k}"${disabled}>${SIZE_LABELS[k] || k} — ${tag}</option>`;
   }).join('');
   if (sizes.includes(prev)) sel.value = prev;
 }
@@ -1916,11 +1921,17 @@ async function deleteFarmFromUI(id) {
   if (!isAdmin) return;
   const f = (state.farms||[]).find(x => x.id === id);
   if (!f) return;
+  // A farm with orders can't be hard-deleted (it would orphan them) — steer to
+  // deactivate, which hides it from customers but keeps the name + history.
+  const orderCount = (state.orders || []).filter(o => o.farm === id).length;
+  if (orderCount > 0) {
+    showToast(`"${f.name}" has ${orderCount} order${orderCount===1?'':'s'} — deactivate it instead of deleting`, true);
+    return;
+  }
   const offered = farmSizes(id);
   const trays = offered.reduce((s,k) => s + stockAt(id,k), 0);
-  let msg = `Delete farm "${f.name}"?\n\n`;
-  if (trays > 0) msg += `⚠️ This erases ${trays} tray${trays===1?'':'s'} of stock across ${offered.length} size${offered.length===1?'':'s'}.\n\n`;
-  msg += `Existing orders from this farm stay in the system but show the raw farm id.`;
+  let msg = `Delete farm "${f.name}"?`;
+  if (trays > 0) msg += `\n\n⚠️ This erases ${trays} tray${trays===1?'':'s'} of stock across ${offered.length} size${offered.length===1?'':'s'}.`;
   if (!confirm(msg)) return;
   await farmAction_({ action: 'deleteFarm', targetId: id }, null, null, `Deleted "${f.name}"`, null);
 }
@@ -1978,6 +1989,7 @@ async function submitOrder() {
   if (!farm)               { showToast('Please choose a farm', true); return; }
   if (!size)               { showToast('Please choose an egg size', true); return; }
   if (!trays || trays < 1) { showToast('Enter number of trays', true); return; }
+  if ((Number(state.prices[size]) || 0) <= 0) { showToast(`${SIZE_LABELS[size] || size} isn't priced yet — please pick another size`, true); return; }
   if (stockAt(farm, size) <= 0) { showToast(`${SIZE_LABELS[size]} is out of stock at ${farmName(farm)}`, true); return; }
 
   // Ensure we have a dedup ID for this form session
